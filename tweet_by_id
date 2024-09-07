@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# 2024-06-15 - Old Twitter api endpoints are up again.
+# 2024-06-18 - Old Twitter api with guest token access are open (no account needed)
+#              graphql tweet_by_id without guest token works 
+
+input=$1
+
+pretty=(jq -r '.data.tweetResult.result | "[\(.legacy.created_at | strptime("%a %b %d %H:%M:%S +0000 %Y") | mktime - (now | gmtime | mktime - (now | trunc)) | strflocaltime("%a %d %b %T %Z %Y"))] @\(.core.user_results.result.legacy.screen_name) (\(.core.user_results.result.legacy.name))\(if(.core.user_results.result.legacy.verified_type == "Business") then "【𝗚】: " elif(.core.user_results.result.is_blue_verified == true) then "【𝗕】: " else ": " end)\(.legacy.full_text | gsub("&amp;";"&") | gsub("  ";" ")) | ↳ \(.legacy.reply_count | tostring | [while(length>0; .[:-3]) | .[-3:]] | reverse | join(",")) ⇅ \(.legacy.retweet_count | tostring | [while(length>0; .[:-3]) | .[-3:]] | reverse | join(",")) ♥ \(.legacy.favorite_count | tostring | [while(length>0; .[:-3]) | .[-3:]] | reverse| join(",")) 🡕 \(if(.views.count) then "\(.views.count | tostring | [while(length>0; .[:-3]) | .[-3:]] | reverse | join(","))" else "" end) | \(.source | gsub("<[^>]*>";"")) \(if(.core.user_results.result.legacy.location != "") then "| \(.core.user_results.result.legacy.location) " else "" end)\(if(.has_birdwatch_notes == true) then "| 𝚑𝚊𝚜 𝚋𝚒𝚛𝚍𝚠𝚊𝚝𝚌𝚑 𝚗𝚘𝚝𝚎 " else "" end)| https://twitter.com/\(.core.user_results.result.legacy.screen_name)/status/\(.legacy.id_str)"')
+
+if [[ $input == "-r" ]] || [[ $input == "-raw" ]]; then
+  unset pretty input
+  pretty='jq'
+  input=$2
+fi
+
+id="${input##*/}"
+
+bearer_token="AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF"
+#guest_token=$(curl -s -XPOST https://api.twitter.com/1.1/guest/activate.json -H "Authorization: Bearer ${bearer_token}" | jq -r '.guest_token')
+
+api='https://api.twitter.com/graphql/7xflPyRiUxGVbJd4uWmbfg/TweetResultByRestId'
+# basic
+#variables="{\"tweetId\":\"${id}\",\"withCommunity\":false,\"includePromotedContent\":false,\"withVoice\":true}"
+# full
+variables='{"count":1,"withSafetyModeUserFields":true,"includePromotedContent":true,"withQuickPromoteEligibilityTweetFields":true,"withVoice":true,"withV2Timeline":true,"withDownvotePerspective":false,"withBirdwatchNotes":true,"withCommunity":true,"withSuperFollowsUserFields":true,"withReactionsMetadata":false,"withReactionsPerspective":false,"withSuperFollowsTweetFields":true,"isMetatagsQuery":false,"withReplays":true,"withClientEventToken":false,"withAttachments":true,"withConversationQueryHighlights":true,"withMessageQueryHighlights":true,"withMessages":true,"tweetId":"'"${id}"'"}'
+features='{"creator_subscriptions_tweet_preview_api_enabled":true,"communities_web_enable_tweet_community_results_fetch":true,"c9s_tweet_anatomy_moderator_badge_enabled":true,"articles_preview_enabled":true,"tweetypie_unmention_optimization_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"view_counts_everywhere_api_enabled":true,"longform_notetweets_consumption_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"tweet_awards_web_tipping_enabled":false,"creator_subscriptions_quote_tweet_preview_enabled":false,"freedom_of_speech_not_reach_fetch_enabled":true,"standardized_nudges_misinfo":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"tweet_with_visibility_results_prefer_gql_media_interstitial_enabled":true,"rweb_video_timestamps_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"longform_notetweets_inline_media_enabled":true,"rweb_tipjar_consumption_enabled":true,"responsive_web_graphql_exclude_directive_enabled":true,"verified_phone_label_enabled":false,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"responsive_web_graphql_timeline_navigation_enabled":true,"responsive_web_enhance_cards_enabled":false}'
+fieldToggles='{"withArticleRichContentState":true,"withArticlePlainText":true}'
+
+if [ -z "$id" ]; then
+  cat << eof
+usage: ${0##*/} [option] [tweet_id or url]
+  option: -r[aw] for raw json dump
+eof
+  exit 1
+fi
+
+#-H "x-guest-token: ${guest_token}" |
+
+curl -s -G ${api} \
+  --data-urlencode "variables=${variables}" \
+  --data-urlencode "features=${features}" \
+  --data-urlencode "fieldToggles=${fieldToggles}" \
+  -H "Authorization: Bearer ${bearer_token}" |
+  "${pretty[@]}"

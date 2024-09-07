@@ -1,0 +1,51 @@
+#!/bin/bash
+# simple tool to return current twitter trends
+# requires account: auth_token and ct0/x-csrf-token
+#   (see https://i.imgur.com/YRBxElz.png)
+# 
+# results:
+# Mosque 39.7K | #WeirdAF 26.8K | Gambit 15.3K | Beaches 12.1K | Kuwait 10.3K | #thebachelorette 9,882 | Sean Astin 5,088 | CRTs 2,369 | Harris Faulkner 1,243 | #WhiteDudesForKamala | Mark Hamill | Kelsey | Jordan Montgomery
+
+x_csrf_token=''
+auth_token=''
+
+url='https://x.com/i/api/graphql/2VmYCXf-9w5VXcLsNbumRw/ExplorePage'
+
+variables='{"cursor":""}'
+features='{"rweb_tipjar_consumption_enabled":true,
+"responsive_web_graphql_exclude_directive_enabled":true,
+"verified_phone_label_enabled":false,
+"responsive_web_graphql_timeline_navigation_enabled":true,
+"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,
+"creator_subscriptions_tweet_preview_api_enabled":true,
+"communities_web_enable_tweet_community_results_fetch":true,
+"c9s_tweet_anatomy_moderator_badge_enabled":true,
+"articles_preview_enabled":true,
+"tweetypie_unmention_optimization_enabled":true,
+"responsive_web_edit_tweet_api_enabled":true,
+"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,
+"view_counts_everywhere_api_enabled":true,
+"longform_notetweets_consumption_enabled":true,
+"responsive_web_twitter_article_tweet_consumption_enabled":true,
+"tweet_awards_web_tipping_enabled":false,
+"creator_subscriptions_quote_tweet_preview_enabled":false,
+"freedom_of_speech_not_reach_fetch_enabled":false,
+"standardized_nudges_misinfo":false,
+"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,
+"rweb_video_timestamps_enabled":true,
+"longform_notetweets_rich_text_read_enabled":true,
+"longform_notetweets_inline_media_enabled":true,
+"responsive_web_enhance_cards_enabled":false}'
+
+response=$(curl -sG "${url}" --data-urlencode "variables=${variables}" --data-urlencode "features=${features}" \
+  -H 'authorization: Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA' \
+  -H "cookie: auth_token=${auth_token}; ct0=${x_csrf_token}" \
+  -H "x-csrf-token: ${x_csrf_token}" \
+  -H 'x-twitter-client-language: en')
+
+#echo "${response}"
+jq -r '.data.explore_page.body.initialTimeline.timeline.timeline.instructions[1].entries[3].content.items[].item.itemContent | "\(.name) \(if (.trend_metadata.meta_description != null) then "~ \(.trend_metadata.meta_description | sub("posts";""))" else "" end)"' <<< "${response}" | 
+  sort -t~ -k2 -h -r | # sort by tweet count, or ... not
+  tr '\n' '|' | 
+  sed 's/~ //g;s/|/| /g;s/| $/\n/'
+

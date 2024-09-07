@@ -1,0 +1,12 @@
+#!/bin/bash
+# Grab screenshot of Twitter post and remove rebranding
+
+#id=$1
+id=$(sed -E 's|.*/([0-9]+).*?|\1|' <<< "$1")
+
+shot-scraper -b firefox -s '.main-thread' -h 2000 --retina "https://twitt.re/i/status/${id}" -o /tmp/${id}.png 2>/dev/null && viewnior /tmp/${id}.png 
+
+#shot-scraper -b firefox -s '.main-thread' -h 2000 --retina "http://10.5.5.1:7071/i/status/${id}" -o /tmp/tweet.png 2>/dev/null && imgur /tmp/tweet.png | xargs echo "Tweet screenshot:" || echo failed
+
+#rm -f /tmp/tweet.png
+
