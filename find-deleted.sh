@@ -21,10 +21,10 @@ lmao() {
           else 
             echo $id
         fi
-      done | tee $(date +%Y%m%d-%H%M%S)-findings.out
+      done
 }
 
 export -f lmao
 
-parallel -j$jobs lmao {} ::: $out 
+parallel -j$jobs lmao {} ::: $out | ts | tee $(date +%Y%m%d-%H%M%S)-findings.out 
 
