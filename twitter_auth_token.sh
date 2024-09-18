@@ -71,4 +71,11 @@ csrf=$(sed -E 's/.*ct0=(.*); .*/\1/' <<< "${cookie}" | cut -d\; -f1)
 echo "Cookie = ${cookie} ${auth_token}"
 echo "x-csrf-token = "${csrf//*=}""  
 
+# ----------
+#{
+#  "flow_token": "g;172690909090909013:-1720000000968:EmRXdfUfARg08AH8D0EO5Fg:13",
+#  "status": "success",
+#  "subtasks": []
+#}
+
 #  jq -c '.subtasks[0]|if(.open_account) then {oauth_token: .open_account.oauth_token, oauth_token_secret: .open_account.oauth_token_secret} else empty end'
