@@ -9,4 +9,4 @@ bearer_token='AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAl
 
 curl -s -H "Authorization: Bearer ${bearer_token}" \
   "https://api.x.com/1.1/friendships/show.json?source_screen_name=${source//@/}&target_screen_name=${target//@/}" |
-  jq -r '.relationship | "@\(.source.screen_name) follows @\(.target.screen_name): \(.source.following) | followed by? \(.source.followed_by)"'
+  jq -r '.relationship | "@\(.source.screen_name) follows @\(.target.screen_name): \(.source.following) | followed by @\(.target.screen_name): \(.source.followed_by)"'
