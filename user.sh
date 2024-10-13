@@ -1,13 +1,13 @@
 #!/bin/bash
 # grab twitter user info
 # requires account, 2 parameters from header
+# provide a valid auth_token (we can send a junk 32-byte csrf)
 
-x_csrf_token=""
 auth_token=""
+x_csrf_token="00000000000000000000000000000000"
 
-usage() { echo "$0 username"; exit 1; }
-[ "$#" -ne 1 ] && usage
-user="$1"
+user=$1
+if [[ -z $user || -z $auth_token ]]; then echo -e "provide an auth_token\n$0 user"; exit 1; fi
 
 bearer_token='AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF'
 
