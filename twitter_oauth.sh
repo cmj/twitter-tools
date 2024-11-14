@@ -12,7 +12,7 @@ if [[ -z "$username" || -z "$password" ]]; then
 fi
 
 bearer_token='AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F'
-guest_token=$(curl -s -XPOST -c "${cookie}" https://api.twitter.com/1.1/guest/activate.json -H "Authorization: Bearer ${bearer_token}" -d "grant_type=client_credentials" | jq -r '.guest_token')
+guest_token=$(curl -s -XPOST https://api.twitter.com/1.1/guest/activate.json -H "Authorization: Bearer ${bearer_token}" -d "grant_type=client_credentials" | jq -r '.guest_token')
 base_url='https://api.twitter.com/1.1/onboarding/task.json'
 header=(-H "Authorization: Bearer ${bearer_token}" -H "User-Agent: TwitterAndroid/10.21.0-release.0" -H "X-Twitter-Active-User: yes" -H "Content-Type: application/json" -H "X-Guest-Token: ${guest_token}")
 
