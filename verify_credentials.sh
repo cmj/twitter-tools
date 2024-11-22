@@ -3,8 +3,9 @@
 
 auth_token=''
 #x_csrf_token=''
-# or basic csrf token
-x_csrf_token='00000000000000000000000000000000'
+# or basic csrf token. this 32-byte string can be random, unlike the
+# 160-byte x-csrf-token you are given.
+x_csrf_token='00000000000000000000000000000000' 
 
 bearer_token="AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF"
 
