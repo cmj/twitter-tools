@@ -4,8 +4,14 @@
 # direct tweet url or id as input
 # ex ./birwatch-fetch.sh https://x.com/elonmusk/status/1838337595970847103
 
-x_csrf_token=''
-auth_token=''
+if [ -f .env ]; then
+  . .env
+    if [[ -z $auth_token || -z $x_csrf_token ]]; then
+      echo "set auth_token and x_csrf_token in .env"; exit 1
+    fi
+  else
+    echo "set credentials in .env"; exit 1
+fi
 
 ####
 
@@ -24,4 +30,4 @@ features='{"responsive_web_birdwatch_media_notes_enabled":true,"responsive_web_b
 curl -s -G "${header[@]}" $api \
   --data-urlencode "variables=${variables}" \
   --data-urlencode "features=${features}" |
-  jq
+  jq -r '.data.tweet_result_by_rest_id.result | "## NOT MISLEADING\n\(.not_misleading_birdwatch_notes.notes[].data_v1.summary.text)\n","## MISLEADING\n\(.misleading_birdwatch_notes.notes[].data_v1.summary.text)\n"'
