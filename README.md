@@ -1,2 +1,2 @@
-# twitter_scripts
-Collection of tools to scrape twitter.
+# Twitter Tools
+A collection of simple scripts and tools. Mostly for testing various API endpoints.
