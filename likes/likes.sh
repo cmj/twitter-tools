@@ -27,4 +27,4 @@ curl -s -G "${header[@]}" "${api}" \
   --data-urlencode "variables=${variables}" \
   --data-urlencode "features=${features}" \
   -data-urlencode "fieldToggles=${fieldToggles}" |
-  jq '.data.user.result.timeline_v2.timeline.instructions[0].entries[].content.itemContent.tweet_results.result | select( . != null ) | "[\(.legacy.created_at)] Liked @\(.core.user_results.result.legacy.screen_name) - \(.legacy.full_text)  https://x.com/\(.core.user_results.result.legacy.screen_name)/status\(.legacy.id_str)"' | sed 's/\\n/ /g;s/^\"//;s/\"$//;s/\\//g' | ct
+  jq '.data.user.result.timeline_v2.timeline.instructions[0].entries[].content.itemContent.tweet_results.result | select( . != null ) | "[\(.legacy.created_at)] Liked @\(.core.user_results.result.legacy.screen_name) - \(.legacy.full_text)  https://x.com/\(.core.user_results.result.legacy.screen_name)/status/\(.legacy.id_str)"' | sed 's/\\n/ /g;s/^\"//;s/\"$//;s/\\//g' | ct
