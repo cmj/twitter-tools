@@ -1,7 +1,8 @@
 #!/bin/bash
 # Twitter API verify_credentials/is_logged_in example  
 
-auth_token=''
+auth_token=$1
+
 #x_csrf_token=''
 # or basic csrf token. this 32-byte string can be random, unlike the
 # 160-byte x-csrf-token you are given.
