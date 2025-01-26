@@ -43,7 +43,7 @@ spaces() {
 curl -s -G "${header[@]}" $url \
   --data-urlencode "variables=${variables}" \
   --data-urlencode "features=${features}" |
-  jq -r '.data.search_by_raw_query.audio_spaces_grouped_by_section | if(.sections[0].items[]) then .sections[0].items[].space.rest_id else empty end' |
+  jq -r '.data.search_by_raw_query.audio_spaces_grouped_by_section | if(.sections[0].items) then .sections[0].items[].space.rest_id else empty end' |
   head -$limit |
   while read id; do
     echo "# Space - $id"
