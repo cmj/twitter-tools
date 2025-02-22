@@ -11,14 +11,14 @@
 // @downloadURL  https://github.com/cmj/twitter-tools/Redirect_Twitter_To_Nitter.user.js
 // ==/UserScript==
 
-// Running Nitter instances (ordered by presumed account volume):
-// nitter.net (100 accounts)
-// nitter.poast.org (hundreds)
-// xcancel.com (500)
-// nitter.privacydev.net (a few accounts)
-// twitt.re (~5 accounts)
+// nitter.net
+// nitter.poast.org
+// xcancel.com
+// nitter.privacydev.net
+// twitt.re
 // nitter.aishiteiru.moe
 // nitter.brainfuck.space
+
 const NITTER_URL = 'nitter.net' // Nitter instance
 const TWITTER_URL = 'twitter.com'
 const XCOM_URL = 'x.com'
