@@ -12,13 +12,14 @@
 // ==/UserScript==
 
 // Running Nitter instances (ordered by presumed account volume):
+// nitter.net (100 accounts)
 // nitter.poast.org (hundreds)
 // xcancel.com (500)
 // nitter.privacydev.net (a few accounts)
 // twitt.re (~5 accounts)
 // nitter.aishiteiru.moe
 // nitter.brainfuck.space
-const NITTER_URL = 'nitter.poast.org' // Nitter instance
+const NITTER_URL = 'nitter.net' // Nitter instance
 const TWITTER_URL = 'twitter.com'
 const XCOM_URL = 'x.com'
 
