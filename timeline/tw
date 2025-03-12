@@ -2,7 +2,8 @@
 
 # 2024-06-15 - Old Twitter api endpoints are up again.
 # 2024-06-18 - Old Twitter api with guest token access are open (no account needed)
-#              graphql tweet_by_id without guest token works 
+# 2025-03-10 - TweetResultByRestId endpoint changed
+# ratelimits: 300/15min
 
 input=$1
 
