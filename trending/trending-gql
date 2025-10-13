@@ -1,13 +1,13 @@
 #!/bin/bash
 # simple tool to return current twitter trends
 # requires account: auth_token and ct0/x-csrf-token
-#   (see https://i.imgur.com/YRBxElz.png)
 # 
 # results:
 # Mosque 39.7K | #WeirdAF 26.8K | Gambit 15.3K | Beaches 12.1K | Kuwait 10.3K | #thebachelorette 9,882 | Sean Astin 5,088 | CRTs 2,369 | Harris Faulkner 1,243 | #WhiteDudesForKamala | Mark Hamill | Kelsey | Jordan Montgomery
 
-x_csrf_token=''
-auth_token=''
+. ~/.env-twitter
+#x_csrf_token=''
+#auth_token=''
 
 url='https://x.com/i/api/graphql/2VmYCXf-9w5VXcLsNbumRw/ExplorePage'
 
@@ -43,8 +43,7 @@ response=$(curl -sG "${url}" --data-urlencode "variables=${variables}" --data-ur
   -H "x-csrf-token: ${x_csrf_token}" \
   -H 'x-twitter-client-language: en')
 
-#echo "${response}"
-jq -r '.data.explore_page.body.initialTimeline.timeline.timeline.instructions[1].entries[3].content.items[].item.itemContent | "\(.name) \(if (.trend_metadata.meta_description != null) then "~ \(.trend_metadata.meta_description | sub("posts";""))" else "" end)"' <<< "${response}" | 
+jq -r '.data.explore_page.body.initialTimeline.timeline.timeline.instructions[1].entries[]| select(.entryId | startswith("trend-")) | .content.itemContent | "\(.name) \(if (.trend_metadata.meta_description != null) then "~ \(.trend_metadata.meta_description | sub("posts";""))" else "" end)"' <<< "${response}" |
   sort -t~ -k2 -h -r | # sort by tweet count, or ... not
   tr '\n' '|' | 
   sed 's/~ //g;s/|/| /g;s/| $/\n/'

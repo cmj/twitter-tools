@@ -1,13 +1,13 @@
 #!/bin/bash
 # simple tool to return current twitter trends
 # requires account: auth_token and ct0/x-csrf-token
-#   (see https://i.imgur.com/YRBxElz.png)
 # 
 # results:
 # Anthony Taylor | #WHULIV | #Caturday 7,962 | #SaturdayMorning 4,598 | #SaturdayVibes 7,532 | Good Saturday 25.9K | Barr 63.9K ...
 
-auth_token=''
-x_csrf_token=''
+. ~/.env-twitter
+#auth_token=''
+#x_csrf_token=''
 
 url='https://twitter.com/i/api/2/guide.json'
 params=(
@@ -17,12 +17,14 @@ params=(
 )
 ext='ext=mediaStats,highlightedLabel,hasNftAvatar,voiceInfo,birdwatchPivot,superFollowMetadata,unmentionInfo,editControl'
 
-response=$(curl -sG "${url}" ${params[@]/#/-d } --data-urlencode "${ext}" \
+response=$(
+  curl -sG "${url}" ${params[@]/#/-d } --data-urlencode "${ext}" \
   -H 'authorization: Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA' \
   -H "cookie: auth_token=${auth_token}; ct0=${x_csrf_token}" \
   -H "x-csrf-token: ${x_csrf_token}" \
-  -H 'x-twitter-client-language: en')
+  -H 'x-twitter-client-language: en'
+)
 
-jq -r '.timeline.instructions[1].addEntries.entries[2].content.timelineModule.items[].item.content.trend | select(.promotedMetadata|not) | "\(.name) \(if(.trendMetadata.metaDescription) then .trendMetadata.metaDescription|sub("posts";"") else "" end)"' <<< "${response}" | 
+jq -r '.timeline.instructions[1].addEntries.entries[-2].content.timelineModule.items[].item.content.trend | select(.promotedMetadata|not) | "\(.name) \(if(.trendMetadata.metaDescription) then .trendMetadata.metaDescription|sub("posts";"") else "" end)"' <<< "${response}" | 
   tr '\n' '|' | 
   sed 's/|/| /g;s/| $/\n/'
