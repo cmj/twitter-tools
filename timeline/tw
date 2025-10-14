@@ -38,5 +38,6 @@ curl -s -G ${api} \
   --data-urlencode "variables=${variables}" \
   --data-urlencode "features=${features}" \
   --data-urlencode "fieldToggles=${fieldToggles}" \
+  -H "User-Agent: TwitterAndroid/10.21.1" \
   -H "Authorization: Bearer ${bearer_token}" |
   "${pretty[@]}"
