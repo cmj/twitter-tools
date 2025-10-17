@@ -1,4 +1,5 @@
 #!/bin/bash
+# v1.1 now requires curl major_version >=8 or curl-impersonate
 
 x_csrf_token=''
 auth_token=''

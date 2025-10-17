@@ -1,4 +1,5 @@
 #!/bin/bash
+# v1.1 now requires curl major_version >=8 or curl-impersonate
 
 usage() { echo -e "See friendship between users\n$0 source_username target_username"; exit 1; }
 [ "$#" -ne 2 ] && usage

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Retrieve all users a Twitter account is following
-# update: [2025-09-10] seems to be phasing out v1.1 endpoints, using all new gql endpoints 
+# v1.1 now requires curl major_version >=8 or curl-impersonate
 # TODO: fix for hidden/empty frienship entries
 
 # provide `auth_token` and `x_csrf_token`
