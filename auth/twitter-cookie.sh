@@ -5,7 +5,7 @@ username=""
 password=""
 # set curl, or curl-impersonate wrapper (curl_chrome100, curl_ff117, curl_chrome99_android, etc) https://github.com/lwthiker/curl-impersonate
 curl_="curl_chrome99_android"
-debug=1 # [0|1] print responses 
+debug=0 # [0|1] print responses 
 
 ###
 
