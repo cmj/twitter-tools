@@ -38,6 +38,6 @@ curl -s -G ${api} \
   --data-urlencode "variables=${variables}" \
   --data-urlencode "features=${features}" \
   --data-urlencode "fieldToggles=${fieldToggles}" \
-  -H "User-Agent: Twitterbot" \
+  -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" \
   -H "Authorization: Bearer ${bearer_token}" |
   "${pretty[@]}"
