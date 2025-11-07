@@ -14,7 +14,7 @@ id=$1
 ####
 
 bearer_token='AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF'
-header=(-H "Authorization: Bearer ${bearer_token}" -H "User-Agent: TwitterAndroid/10.21.1" -H "X-Csrf-Token: ${x_csrf_token}" -H "Cookie: ct0=${x_csrf_token}; auth_token=${auth_token}")
+header=(-H "Authorization: Bearer ${bearer_token}" -H "User-Agent: Twitterbot" -H "X-Csrf-Token: ${x_csrf_token}" -H "Cookie: ct0=${x_csrf_token}; auth_token=${auth_token}")
 variables='{"id":"'"$id"'","isMetatagsQuery":false,"withReplays":true,"withListeners":true}'
 #api=https://x.com/i/api/graphql/p8k4kaPusjNj85gj8w_YAQ/AudioSpaceById
 api=https://x.com/i/api/1.1/live_video_stream/status/$id

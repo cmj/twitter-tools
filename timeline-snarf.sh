@@ -35,7 +35,7 @@ query="include:nativeretweets from:${user} since:${since} until:${until}"
 start=$EPOCHSECONDS # to calculate scrape time
 
 bearer_token='AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF'
-header=(-H "Authorization: Bearer ${bearer_token}" -H "User-Agent: TwitterAndroid/10.21.1" -H "X-Csrf-Token: ${x_csrf_token}" -H "Cookie: ct0=${x_csrf_token}; auth_token=${auth_tokens[0]}")
+header=(-H "Authorization: Bearer ${bearer_token}" -H "User-Agent: Twitterbot" -H "X-Csrf-Token: ${x_csrf_token}" -H "Cookie: ct0=${x_csrf_token}; auth_token=${auth_tokens[0]}")
 
 #url='https://api.twitter.com/graphql/gkjsKepM6gl_HmFWoWKfgg/SearchTimeline'
 url='https://x.com/i/api/graphql/uGjEfWQSYF3MLxu5TVEiRA/SearchTimeline'
@@ -51,7 +51,7 @@ tokens_max="$((${#auth_tokens[@]}-1))"
 while :; do
   next=$(($count+1))
   auth_token="${auth_tokens[$token]}"
-  header=(-H "Authorization: Bearer ${bearer_token}" -H "User-Agent: TwitterAndroid/10.21.1" -H "X-Csrf-Token: ${x_csrf_token}" -H "Cookie: ct0=${x_csrf_token}; auth_token=${auth_token}")
+  header=(-H "Authorization: Bearer ${bearer_token}" -H "User-Agent: Twitterbot" -H "X-Csrf-Token: ${x_csrf_token}" -H "Cookie: ct0=${x_csrf_token}; auth_token=${auth_token}")
   cursor=$(jq -r '.data.search_by_raw_query.search_timeline.timeline.instructions[-1] | if(.entries[-1].content.value) then .entries[-1].content.value else .entry.content.value end' $dest/$count.json 2>/dev/null)
   after="\"cursor\":\"${cursor}\","
   if [[ $cursor != "null" ]]; then # XXX getting cursors on empty reults with search api

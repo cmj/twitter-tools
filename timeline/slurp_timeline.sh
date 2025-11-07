@@ -7,7 +7,7 @@ id=$1
 if [ -z $id ]; then echo "$0 id"; exit; fi
 
 bearer_token="AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF"
-guest_token=$(curl -s -XPOST https://api.twitter.com/1.1/guest/activate.json -H "Authorization: Bearer ${bearer_token}" -H "User-Agent: TwitterAndroid/10.21.1" | jq -r '.guest_token')
+guest_token=$(curl -s -XPOST https://api.twitter.com/1.1/guest/activate.json -H "Authorization: Bearer ${bearer_token}" -H "User-Agent: Twitterbot" | jq -r '.guest_token')
 
 api='https://api.twitter.com/graphql/83h5UyHZ9wEKBVzALX8R_g/ConversationTimelineV2'
 variables="{\"focalTweetId\":\"${id}\",\"includeHasBirdwatchNotes\":true}"
@@ -17,7 +17,7 @@ curl -s -G ${api} \
   --data-urlencode "variables=${variables}" \
   --data-urlencode "features=${features}" \
   -H "Authorization: Bearer ${bearer_token}" \
-  -H "User-Agent: TwitterAndroid/10.21.1" \
+  -H "User-Agent: Twitterbot" \
   -H "x-guest-token: ${guest_token}"
   #fx
   #jq -C | bat #fx

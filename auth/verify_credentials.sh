@@ -12,7 +12,7 @@ bearer_token="AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAl
 
 curl -s \
   -H "Authorization: Bearer ${bearer_token}" \
-  -H "User-Agent: TwitterAndroid/10.21.1" \
+  -H "User-Agent: Twitterbot" \
   -H "X-Csrf-Token: ${x_csrf_token}" \
   -H "Cookie: ct0=${x_csrf_token}; auth_token=${auth_token}" \
   'https://api.twitter.com/1.1/account/verify_credentials.json' |

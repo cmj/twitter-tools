@@ -10,7 +10,7 @@ ct0=$(tr -dc 0-9a-f < /dev/urandom | head -c 32)
 bearer_token="AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF"
 
 curl -s https://api.x.com/1.1/account/settings.json \
-  -H "User-Agent: TwitterAndroid/10.21.1" \
+  -H "User-Agent: Twitterbot" \
   -H "x-csrf-token: ${ct0}" \
   -H "authorization: Bearer ${bearer_token}" \
   -H "Cookie: ct0=${ct0}; auth_token=${auth_token}" \
