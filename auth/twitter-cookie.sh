@@ -86,24 +86,32 @@ fi
 "${curl_}" -s -o /dev/null "${base_url}" "${header[@]}" -H "X-Csrf-Token: ${csrf}" \
   -d '{"flow_token":"'"${token_4}"'","subtask_inputs":[{"subtask_id":"AccountDuplicationCheck","check_logged_in_account":{"link":"AccountDuplicationCheck_false"}}]}}' 
 
-auth_token=$(sed -En 's/.*auth_token\t(.*)/\1/p' "${cookie}")
-ct0=$(sed -En 's/.*ct0\t(.*)/\1/p' "${cookie}")
+auth_token=$(awk '/auth_token/ {print $7}' "${cookie}")
+ct0=$(awk '$6~/ct0/ {print $7}' "${cookie}")
+user_id=$(sed -n 's/.*twid.*"u=\(.*\)"/\1/p' "${cookie}")
 
 [[ "$debug" -eq 1 ]] && echo -e "\n\n\e[0;32m#### written to\e[0m cookies.json\n\
---- nitter.conf (https://github.com/cmj/nitter/tree/cookie_header) ---\n\
+--- nitter\n\
+{\"kind\":\"cookie\",\"username\":\"${username}\",\"id\":\"${user_id}\",\"auth_token\":\"${auth_token}\",\"ct0\":\"${ct0}\"}\n\
+--- OLD nitter.conf (https://github.com/cmj/nitter/tree/cookie_header) ---\n\
 cookieHeader = \"ct0=${ct0}; auth_token=${auth_token}\"\n\
 xCsrfToken = \"${ct0}\"\n\
 --- cookies.json (https://github.com/d60/twikit/issues/227) ---"
 # ugly way to convert netscape cookie to json, but works
-tail -n+5 "${cookie}" | 
-  awk  '{print $6,$7}' | 
-  sed 's/"/\\"/g;s/^/\"/g;s/ /\":\"/;s/$/\",/' |
-  tr -d '\n' | 
-  sed 's/^/\{/;s/,$/\}/' | 
+awk '
+BEGIN { print "{" }
+ /^[ \t]*# / || NF==0 { next }
+ NF==7 {
+    if(count++) print ","
+    for(i=1;i<=7;i++) gsub(/"/,"\\\"",$i)
+    printf "\"%s\":\"%s\"", $6,$7
+}
+END { print "}" }' "${cookie}" |
   jq -c |
   tee cookies.json
- 
-#sed -En 's/"/\\"/g;s/.*twitter.*\t.*\t(.*)\t(.*)/"\1":"\2",/p' "${cookie}" | tr -d '\n' | sed 's/^/\{/;s/,$/\}/' | jq -c | tee cookies.json
+
+echo "# Nitter sessions.jsonl"
+echo "{\"kind\":\"cookie\",\"username\":\"${username}\",\"id\":\"${user_id}\",\"auth_token\":\"${auth_token}\",\"ct0\":\"${ct0}\"}"
 
 # remove temporary cookie file
 rm -r "${cookie}"
