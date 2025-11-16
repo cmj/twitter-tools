@@ -95,7 +95,14 @@ cookieHeader = \"ct0=${ct0}; auth_token=${auth_token}\"\n\
 xCsrfToken = \"${ct0}\"\n\
 --- cookies.json (https://github.com/d60/twikit/issues/227) ---"
 # ugly way to convert netscape cookie to json, but works
-tail -n+5 "${cookie}" | awk  '{print $6,$7}' | sed 's/"/\\"/g;s/^/\"/g;s/ /\":\"/;s/$/\",/' |tr -d '\n' | sed 's/^/\{/;s/,$/\}/' | jq -c
+tail -n+5 "${cookie}" | 
+  awk  '{print $6,$7}' | 
+  sed 's/"/\\"/g;s/^/\"/g;s/ /\":\"/;s/$/\",/' |
+  tr -d '\n' | 
+  sed 's/^/\{/;s/,$/\}/' | 
+  jq -c |
+  tee cookies.json
+ 
 #sed -En 's/"/\\"/g;s/.*twitter.*\t.*\t(.*)\t(.*)/"\1":"\2",/p' "${cookie}" | tr -d '\n' | sed 's/^/\{/;s/,$/\}/' | jq -c | tee cookies.json
 
 # remove temporary cookie file
