@@ -5,13 +5,13 @@ username="$1"
 password="$2"
 curl_="curl" # set curl, or curl-impersonate wrapper (curl_chrome100, curl_ff117, curl_chrome99_android, etc)
 debug=0 # [0|1] print responses 
-totp_code="$3"
+#totp_code="$3"
 cookie="cookies.txt" # tempfile for cookie jar
 
 ### end
 
 if [[ -z "$username" || -z "$password" ]]; then
-  echo "$0 username password [totp_code]"
+  echo "$0 username password [wait for totp code prompt]"
   exit 1
 fi
 
