@@ -1,20 +1,20 @@
 #!/bin/bash
 # Grab Twitter cookie (auth_token, x-csrf-token).
-# 
-# nitter.conf (https://github.com/cmj/nitter/tree/cookie_header)
-# cookies.json (https://github.com/d60/twikit/issues/227) 
 
 username="$1"
 password="$2"
 curl_="curl" # set curl, or curl-impersonate wrapper (curl_chrome100, curl_ff117, curl_chrome99_android, etc)
 debug=0 # [0|1] print responses 
-totp_code="$3"
+#totp_code="$3"
 cookie="cookies.txt" # tempfile for cookie jar
+cookie_file="cookies-$username-$EPOCHSECONDS.json"
+# uncomment to print/write session entry for Nitter
+#nitter_file="sessions-$EPOCHSECONDS.jsonl"
 
 ### end
 
 if [[ -z "$username" || -z "$password" ]]; then
-  echo "$0 username password [totp_code]"
+  echo "$0 username password [wait for prompt to enter 2FA/totp_code]"
   exit 1
 fi
 
@@ -90,28 +90,29 @@ auth_token=$(awk '/auth_token/ {print $7}' "${cookie}")
 ct0=$(awk '$6~/ct0/ {print $7}' "${cookie}")
 user_id=$(sed -n 's/.*twid.*"u=\(.*\)"/\1/p' "${cookie}")
 
-[[ "$debug" -eq 1 ]] && echo -e "\n\n\e[0;32m#### written to\e[0m cookies.json\n\
---- nitter\n\
-{\"kind\":\"cookie\",\"username\":\"${username}\",\"id\":\"${user_id}\",\"auth_token\":\"${auth_token}\",\"ct0\":\"${ct0}\"}\n\
---- OLD nitter.conf (https://github.com/cmj/nitter/tree/cookie_header) ---\n\
-cookieHeader = \"ct0=${ct0}; auth_token=${auth_token}\"\n\
-xCsrfToken = \"${ct0}\"\n\
---- cookies.json (https://github.com/d60/twikit/issues/227) ---"
-# ugly way to convert netscape cookie to json, but works
-awk '
-BEGIN { print "{" }
- /^[ \t]*# / || NF==0 { next }
- NF==7 {
-    if(count++) print ","
-    for(i=1;i<=7;i++) gsub(/"/,"\\\"",$i)
-    printf "\"%s\":\"%s\"", $6,$7
-}
-END { print "}" }' "${cookie}" |
-  jq -c |
-  tee cookies.json
-
-echo "# Nitter sessions.jsonl"
-echo "{\"kind\":\"cookie\",\"username\":\"${username}\",\"id\":\"${user_id}\",\"auth_token\":\"${auth_token}\",\"ct0\":\"${ct0}\"}"
+if [[ -n "$auth_token" ]]; then
+    echo "# Success - wrote cookie to ${cookie_file}"
+    # ugly way to convert netscape cookie to json, but works
+    awk '
+    BEGIN { print "{" }
+      /^[ \t]*# / || NF==0 { next }
+    NF==7 {
+      if(count++) print ","
+      for(i=1;i<=7;i++) gsub(/"/,"\\\"",$i)
+      printf "\"%s\":\"%s\"", $6,$7
+    }
+    END { print "}" }' "${cookie}" |
+      jq -c |
+      tee "${cookie_file}"
+    if [[ -n "$nitter_file" ]]; then
+      echo -e "\n# Nitter session entry written to ${nitter_file}"
+      echo "{\"kind\":\"cookie\",\"username\":\"${username}\",\"id\":\"${user_id}\",\"auth_token\":\"${auth_token}\",\"ct0\":\"${ct0}\"}" |
+        tee "${nitter_file}"
+    fi
+  else
+    echo "Login failed"
+    exit 1
+fi
 
 # remove temporary cookie file
 rm -r "${cookie}"
