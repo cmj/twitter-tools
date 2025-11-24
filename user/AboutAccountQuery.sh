@@ -25,7 +25,8 @@ header=(
 )
 
 #        queryId
-# old    qZ92r6KDO0_GZxVJGM33XA
+# old    4hPpWPld-iu2MDvfn1xoxQ no location
+#        qZ92r6KDO0_GZxVJGM33XA
 # latest XRqGa7EeokUU5kppkh13EA includes user id_str
 queryId="XRqGa7EeokUU5kppkh13EA"
 url="https://x.com/i/api/graphql/$queryId/AboutAccountQuery"
