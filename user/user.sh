@@ -9,7 +9,7 @@ x_csrf_token="00000000000000000000000000000000"
 user=$1
 if [[ -z $user || -z $auth_token ]]; then echo -e "provide an auth_token\n$0 user"; exit 1; fi
 
-bearer_token='AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF'
+bearer_token='AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F'
 
 curl -s "https://api.twitter.com/1.1/users/lookup.json?screen_name=${user//@/}" \
   -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" \

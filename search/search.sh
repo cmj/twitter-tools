@@ -19,7 +19,7 @@ usage() { echo "$0 search query"; exit 1; }
 input="$@"
 query=$(perl -MURI::Escape -wlne 'print uri_escape $_' <<< "${input}")
 
-bearer_token='AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF'
+bearer_token='AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F'
 
 #URL='https://x.com/i/api/graphql/UN1i3zUiCWa-6r-Uaho4fw/SearchTimeline'
 URL='https://api.twitter.com/graphql/gkjsKepM6gl_HmFWoWKfgg/SearchTimeline'

@@ -17,7 +17,7 @@ fi
 
 id="${input##*/}"
 
-bearer_token="AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF"
+bearer_token="AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F"
 
 api='https://api.twitter.com/graphql/sCU6ckfHY0CyJ4HFjPhjtg/TweetResultByRestId'
 variables='{"count":1,"withSafetyModeUserFields":true,"includePromotedContent":true,"withQuickPromoteEligibilityTweetFields":true,"withVoice":true,"withV2Timeline":true,"withDownvotePerspective":false,"withBirdwatchNotes":true,"withCommunity":true,"withSuperFollowsUserFields":true,"withReactionsMetadata":false,"withReactionsPerspective":false,"withSuperFollowsTweetFields":true,"isMetatagsQuery":false,"withReplays":true,"withClientEventToken":false,"withAttachments":true,"withConversationQueryHighlights":true,"withMessageQueryHighlights":true,"withMessages":true,"tweetId":"'"${id}"'"}'

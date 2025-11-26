@@ -10,7 +10,7 @@ auth_token=''
 ####
 
 user="elonmusk"
-bearer_token='AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF'
+bearer_token='AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F'
 date=$(date +%Y%m%d-%H%M%S)
 stats=$(curl -s "https://api.twitter.com/1.1/users/lookup.json?screen_name=${user//@/}" \
   -H "Authorization: Bearer ${bearer_token}" \
