@@ -1,5 +1,5 @@
 #!/bin/bash
-# Grab Twitter cookie for use with Nitter
+# Grab Twitter session for use with Nitter
 
 username="$1"
 password="$2"
