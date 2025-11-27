@@ -5,7 +5,6 @@ username="$1"
 password="$2"
 curl_="curl" # set curl, or curl-impersonate wrapper (curl_chrome100, curl_ff117, curl_chrome99_android, etc)
 debug=0 # [0|1] print responses 
-#totp_code="$3"
 cookie="cookies.txt" # tempfile for cookie jar
 
 ### end
@@ -16,7 +15,6 @@ if [[ -z "$username" || -z "$password" ]]; then
 fi
 
 base_url='https://api.twitter.com/1.1/onboarding/task.json'
-#bearer_token='AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA'
 bearer_token='AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF'
 
 header=(-H "Host: api.twitter.com" -H "Accept: */*" -H "Authorization: Bearer ${bearer_token}" -H "Content-Type:application/json" -H "Referer: https://x.com/" -H "Accept-Language: en-US" -H "X-Twitter-Client-Language: en-US" -c "${cookie}")
@@ -27,7 +25,6 @@ if [[ "$curl_" == "curl" ]]; then
 fi
 
 ### Grab guest token
-#guest_token="$((((${EPOCHREALTIME/.}/1000)-1288834974657)<<22))"
 activate=$("${curl_}" -s -XPOST "${header[@]}" -c "${cookie}" "https://api.twitter.com/1.1/guest/activate.json")
 guest_token=$(jq -r '.guest_token' <<< "${activate}")
 [[ "$debug" -eq 1 ]] && echo -e "\e[0;32m#### activate\e[0m\n${activate}\n\e[0;32m#### guest_token\e[0m\n${guest_token}\n"
@@ -78,10 +75,10 @@ if [[ "${check_2fa}" != "LoginTwoFactorAuthChallenge" ]]; then
       -d '{"flow_token":"'"${token_4}"'","subtask_inputs":[{"subtask_id":"LoginTwoFactorAuthChallenge","enter_text":{"text":"'"${totp_code}"'","link":"next_link"}}]}'
 fi
 
-### final step
+### final step - 2025-11-24 - not authorized
 # only need full ct0 written to cookie jar, we can /dev/null this
-"${curl_}" -s -o /dev/null "${base_url}" "${header[@]}" -H "X-Csrf-Token: ${csrf}" \
-  -d '{"flow_token":"'"${token_4}"'","subtask_inputs":[{"subtask_id":"AccountDuplicationCheck","check_logged_in_account":{"link":"AccountDuplicationCheck_false"}}]}}' 
+#"${curl_}" -s -o /dev/null "${base_url}" "${header[@]}" -H "X-Csrf-Token: ${csrf}" \
+#  -d '{"flow_token":"'"${token_4}"'","subtask_inputs":[{"subtask_id":"AccountDuplicationCheck","check_logged_in_account":{"link":"AccountDuplicationCheck_false"}}]}}' 
 
 auth_token=$(awk '/auth_token/ {print $7}' "${cookie}")
 ct0=$(awk '$6~/ct0/ {print $7}' "${cookie}")
