@@ -5,7 +5,6 @@ username="$1"
 password="$2"
 curl_="curl" # set curl, or curl-impersonate wrapper (curl_chrome100, curl_ff117, curl_chrome99_android, etc)
 debug=0 # [0|1] print responses 
-#totp_code="$3"
 cookie="cookies.txt" # tempfile for cookie jar
 cookie_file="cookies-$username-$EPOCHSECONDS.json"
 # uncomment to print/write session entry for Nitter
@@ -19,7 +18,6 @@ if [[ -z "$username" || -z "$password" ]]; then
 fi
 
 base_url='https://api.twitter.com/1.1/onboarding/task.json'
-#bearer_token='AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA'
 bearer_token='AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF'
 
 header=(-H "Host: api.twitter.com" -H "Accept: */*" -H "Authorization: Bearer ${bearer_token}" -H "Content-Type:application/json" -H "Referer: https://x.com/" -H "Accept-Language: en-US" -H "X-Twitter-Client-Language: en-US" -c "${cookie}")
@@ -30,7 +28,6 @@ if [[ "$curl_" == "curl" ]]; then
 fi
 
 ### Grab guest token
-#guest_token="$((((${EPOCHREALTIME/.}/1000)-1288834974657)<<22))"
 activate=$("${curl_}" -s -XPOST "${header[@]}" -c "${cookie}" "https://api.twitter.com/1.1/guest/activate.json")
 guest_token=$(jq -r '.guest_token' <<< "${activate}")
 [[ "$debug" -eq 1 ]] && echo -e "\e[0;32m#### activate\e[0m\n${activate}\n\e[0;32m#### guest_token\e[0m\n${guest_token}\n"
@@ -42,11 +39,11 @@ flow_1=$("${curl_}" -s "${base_url}?flow_name=login" "${header[@]}" \
 flow_token=$(jq -r .flow_token <<< "${flow_1}")
 [[ "$debug" -eq 1 ]] && echo -e "\e[0;32m#### flow start\e[0m\n${flow_1}\n\e[0;32m#### flow_token\e[0m\n${flow_token}\n"
 
-### ui_metrics 
+### js_instrumentation 
 flow_2=$("${curl_}" -s "${base_url}" "${header[@]}" \
   -d '{"flow_token": "'"${flow_token}"'", "subtask_inputs": [{"subtask_id": "LoginJsInstrumentationSubtask", "js_instrumentation": {"response": "{\"rf\":{\"a4fc506d24bb4843c48a1966940c2796bf4fb7617a2d515ad3297b7df6b459b6\":121,\"bff66e16f1d7ea28c04653dc32479cf416a9c8b67c80cb8ad533b2a44fee82a3\":-1,\"ac4008077a7e6ca03210159dbe2134dea72a616f03832178314bb9931645e4f7\":-22,\"c3a8a81a9b2706c6fec42c771da65a9597c537b8e4d9b39e8e58de9fe31ff239\":-12},\"s\":\"ZHYaDA9iXRxOl2J3AZ9cc23iJx-Fg5E82KIBA_fgeZFugZGYzRtf8Bl3EUeeYgsK30gLFD2jTQx9fAMsnYCw0j8ahEy4Pb5siM5zD6n7YgOeWmFFaXoTwaGY4H0o-jQnZi5yWZRAnFi4lVuCVouNz_xd2BO2sobCO7QuyOsOxQn2CWx7bjD8vPAzT5BS1mICqUWyjZDjLnRZJU6cSQG5YFIHEPBa8Kj-v1JFgkdAfAMIdVvP7C80HWoOqYivQR7IBuOAI4xCeLQEdxlGeT-JYStlP9dcU5St7jI6ExyMeQnRicOcxXLXsan8i5Joautk2M8dAJFByzBaG4wtrPhQ3QAAAZEi-_t7\"}", "link": "next_link"}}]}')
 token_2=$(jq -r .flow_token <<< "${flow_2}")
-[[ "$debug" -eq 1 ]] && echo -e "\e[0;32m#### ui_metrics\e[0m\n${flow_2}\n\e[0;32m#### ui_metrics flow_token\e[0m\n${token_2}\n"
+[[ "$debug" -eq 1 ]] && echo -e "\e[0;32m#### js_instrumentation\e[0m\n${flow_2}\n\e[0;32m#### js_instrumentation flow_token\e[0m\n${token_2}\n"
 
 ### username
 flow_3=$("${curl_}" -s "${base_url}" -b "${cookie}" "${header[@]}" \
@@ -81,10 +78,10 @@ if [[ "${check_2fa}" != "LoginTwoFactorAuthChallenge" ]]; then
       -d '{"flow_token":"'"${token_4}"'","subtask_inputs":[{"subtask_id":"LoginTwoFactorAuthChallenge","enter_text":{"text":"'"${totp_code}"'","link":"next_link"}}]}'
 fi
 
-### final step
-# only need full ct0 written to cookie jar, we can /dev/null this
-"${curl_}" -s -o /dev/null "${base_url}" "${header[@]}" -H "X-Csrf-Token: ${csrf}" \
-  -d '{"flow_token":"'"${token_4}"'","subtask_inputs":[{"subtask_id":"AccountDuplicationCheck","check_logged_in_account":{"link":"AccountDuplicationCheck_false"}}]}}' 
+### final step - 2025-11-24 - not authorized 
+# only need full ct0 written to cookie jar
+#"${curl_}" -s -o /dev/null "${base_url}" "${header[@]}" -H "X-Csrf-Token: ${csrf}" \
+#  -d '{"flow_token":"'"${token_4}"'","subtask_inputs":[{"subtask_id":"AccountDuplicationCheck","check_logged_in_account":{"link":"AccountDuplicationCheck_false"}}]}}' 
 
 auth_token=$(awk '/auth_token/ {print $7}' "${cookie}")
 ct0=$(awk '$6~/ct0/ {print $7}' "${cookie}")
