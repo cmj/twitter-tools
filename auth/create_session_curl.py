@@ -207,24 +207,6 @@ def submit_js_instrumentation(session, flow_token, headers, guest_token):
     flow_token, _ = make_request(session, headers, flow_token, subtask, "Submitting JS instrumentation")
     return flow_token
 
-
-def complete_flow(session, flow_token, headers):
-    """Complete the login flow."""
-    cookies = get_cookies_dict(session)
-
-    headers = headers.copy()
-    headers["X-Twitter-Auth-Type"] = "OAuth2Session"
-    if cookies.get('ct0'):
-        headers["X-Csrf-Token"] = cookies['ct0']
-
-    subtask = {
-        "subtask_id": "AccountDuplicationCheck",
-        "check_logged_in_account": {"link": "AccountDuplicationCheck_false"}
-    }
-
-    make_request(session, headers, flow_token, subtask, "Completing login flow")
-
-
 def extract_user_id(cookies_dict):
     """Extract user ID from twid cookie."""
     twid = cookies_dict.get('twid', '').strip('"')
@@ -249,8 +231,6 @@ def login_and_get_cookies(username, password, totp_seed=None):
 
         if needs_2fa:
             flow_token = submit_2fa(session, flow_token, headers, guest_token, totp_seed)
-
-        complete_flow(session, flow_token, headers)
 
         cookies_dict = get_cookies_dict(session)
         cookies_dict['username'] = username
