@@ -6,7 +6,7 @@ usage() { echo -e "See friendship between users\n$0 source_username target_usern
 source="$1"
 target="$2"
 
-bearer_token='AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF'
+bearer_token='AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F'
 
 curl -s -H "Authorization: Bearer ${bearer_token}" \
   "https://api.x.com/1.1/friendships/show.json?source_screen_name=${source//@/}&target_screen_name=${target//@/}" |
