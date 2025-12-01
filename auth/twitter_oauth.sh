@@ -1,20 +1,22 @@
 #!/bin/bash
+# returns unusable oauth_token
 # Grab oauth token for use with Nitter (requires Twitter account). 
 # results: {"oauth_token":"xxxxxxxxxx-xxxxxxxxx","oauth_token_secret":"xxxxxxxxxxxxxxxxxxxxx"}
-# verifed: 2024-11-14
+# 
 
-username=""
-password=""
+username="$1"
+password="$2"
 
 if [[ -z "$username" || -z "$password" ]]; then
-  echo "needs username and password"
+  echo "$0 <username> <password>"
   exit 1
 fi
 
-bearer_token='AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F'
+#bearer_token='AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F'
+bearer_token='AAAAAAAAAAAAAAAAAAAAAIWCCAAAAAAA2C25AxqI%2BYCS7pdfJKRH8Xh19zA%3D8vpDZzPHaEJhd20MKVWp3UR38YoPpuTX7UD2cVYo3YNikubuxd'
 guest_token=$(curl -s -XPOST https://api.twitter.com/1.1/guest/activate.json -H "Authorization: Bearer ${bearer_token}" -d "grant_type=client_credentials" | jq -r '.guest_token')
 base_url='https://api.twitter.com/1.1/onboarding/task.json'
-header=(-H "Authorization: Bearer ${bearer_token}" -H "User-Agent: TwitterAndroid/10.21.0-release.0" -H "X-Twitter-Active-User: yes" -H "Content-Type: application/json" -H "X-Guest-Token: ${guest_token}")
+header=(-H "Authorization: Bearer ${bearer_token}" -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" -H "X-Twitter-Active-User: yes" -H "Content-Type: application/json" -H "X-Guest-Token: ${guest_token}")
 
 # start flow
 flow_1=$(curl -si -XPOST "${base_url}?flow_name=login&api_version=1&known_device_token=&sim_country_code=us" "${header[@]}" \
