@@ -17,10 +17,11 @@ if [[ -z "$username" || -z "$password" ]]; then
   exit 1
 fi
 
-base_url='https://api.twitter.com/1.1/onboarding/task.json'
+base_url='https://api.x.com/1.1/onboarding/task.json'
 bearer_token='AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF'
+bearer_token2='AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA'
 
-header=(-H "Host: api.twitter.com" -H "Accept: */*" -H "Authorization: Bearer ${bearer_token}" -H "Content-Type:application/json" -H "Referer: https://x.com/" -H "Accept-Language: en-US" -H "X-Twitter-Client-Language: en-US" -c "${cookie}")
+header=(-H "Host: api.x.com" -H "Accept: */*" -H "Authorization: Bearer ${bearer_token}" -H "Content-Type:application/json" -H "Referer: https://x.com/" -H "Accept-Language: en-US" -H "X-Twitter-Client-Language: en-US" -c "${cookie}")
 
 # if NOT using curl-impersonate, override default curl useragent
 if [[ "$curl_" == "curl" ]]; then
@@ -28,7 +29,7 @@ if [[ "$curl_" == "curl" ]]; then
 fi
 
 ### Grab guest token
-activate=$("${curl_}" -s -XPOST "${header[@]}" -c "${cookie}" "https://api.twitter.com/1.1/guest/activate.json")
+activate=$("${curl_}" -s -XPOST "${header[@]}" -c "${cookie}" "https://api.x.com/1.1/guest/activate.json")
 guest_token=$(jq -r '.guest_token' <<< "${activate}")
 [[ "$debug" -eq 1 ]] && echo -e "\e[0;32m#### activate\e[0m\n${activate}\n\e[0;32m#### guest_token\e[0m\n${guest_token}\n"
 header+=(-b "${cookie}" -H "X-Guest-Token: ${guest_token}")
@@ -79,17 +80,23 @@ if [[ "${check_2fa}" != "LoginTwoFactorAuthChallenge" ]]; then
 fi
 
 ### final step - 2025-11-24 - not authorized 
-# only need full ct0 written to cookie jar
-#"${curl_}" -s -o /dev/null "${base_url}" "${header[@]}" -H "X-Csrf-Token: ${csrf}" \
-#  -d '{"flow_token":"'"${token_4}"'","subtask_inputs":[{"subtask_id":"AccountDuplicationCheck","check_logged_in_account":{"link":"AccountDuplicationCheck_false"}}]}}' 
-
+# only requested to retrieve full ct0
 auth_token=$(awk '/auth_token/ {print $7}' "${cookie}")
 ct0=$(awk '$6~/ct0/ {print $7}' "${cookie}")
+
+"${curl_}" -s -o /dev/null 'https://x.com/i/api/graphql/vJ-XatpmQSG8bDch8-t9Jw/UserSessionsList?variables=%7B%7D' \
+  -H "authorization: Bearer ${bearer_token2}" \
+  -H "x-csrf-token: ${ct0}" \
+  -b "${cookie}" -c "${cookie}" \
+  -H "Cookie: auth_token=${auth_token}; ct0=${ct0}"
+
+ct0=$(awk '$6~/ct0/ {print $7}' "${cookie}")
+[[ "$debug" -eq 1 ]] && echo -e "\n\e[0;32m#### ct0/x-csrf-token\e[0m\n${ct0}\n"
+
 user_id=$(sed -n 's/.*twid.*"u=\(.*\)"/\1/p' "${cookie}")
 
 if [[ -n "$auth_token" ]]; then
     echo "# Success - wrote cookie to ${cookie_file}"
-    # ugly way to convert netscape cookie to json, but works
     awk '
     BEGIN { print "{" }
       /^[ \t]*# / || NF==0 { next }
