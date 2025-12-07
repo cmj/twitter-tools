@@ -84,7 +84,7 @@ auth_token=$(awk '/auth_token/ {print $7}' "${cookie}")
 ct0=$(awk '$6~/ct0/ {print $7}' "${cookie}")
 
 "${curl_}" -s -o /dev/null "https://api.x.com/1.1/account/verify_credentials.json?include_email=true&skip_status=false&include_entities=true" \
-  -H "Authorization: Bearer ${bearer_token}" \
+  -H "Authorization: Bearer AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F" \
   -H "User-Agent: TwitterAndroid/10.21.1" \
   -H "X-Csrf-Token: ${ct0}" \
   -b "${cookie}" -c "${cookie}" \
