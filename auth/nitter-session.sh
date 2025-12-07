@@ -16,7 +16,6 @@ fi
 
 base_url='https://api.x.com/1.1/onboarding/task.json'
 bearer_token='AAAAAAAAAAAAAAAAAAAAAFQODgEAAAAAVHTp76lzh3rFzcHbmHVvQxYYpTw%3DckAlMINMjmCwxUcaXbAN4XqJVdgMJaHqNOFgPMK0zN1qLqLQCF'
-bearer_token2='AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA'
 
 header=(-H "Host: api.x.com" -H "Accept: */*" -H "Authorization: Bearer ${bearer_token}" -H "Content-Type:application/json" -H "Referer: https://x.com/" -H "Accept-Language: en-US" -H "X-Twitter-Client-Language: en-US" -c "${cookie}")
 
@@ -84,9 +83,10 @@ fi
 auth_token=$(awk '/auth_token/ {print $7}' "${cookie}")
 ct0=$(awk '$6~/ct0/ {print $7}' "${cookie}")
 
-"${curl_}" -s -o /dev/null 'https://x.com/i/api/graphql/vJ-XatpmQSG8bDch8-t9Jw/UserSessionsList?variables=%7B%7D' \
-  -H "authorization: Bearer ${bearer_token2}" \
-  -H "x-csrf-token: ${ct0}" \
+"${curl_}" -s -o /dev/null "https://api.x.com/1.1/account/verify_credentials.json?include_email=true&skip_status=false&include_entities=true" \
+  -H "Authorization: Bearer ${bearer_token}" \
+  -H "User-Agent: TwitterAndroid/10.21.1" \
+  -H "X-Csrf-Token: ${ct0}" \
   -b "${cookie}" -c "${cookie}" \
   -H "Cookie: auth_token=${auth_token}; ct0=${ct0}"
 
