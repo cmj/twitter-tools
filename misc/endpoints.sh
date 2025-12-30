@@ -2,7 +2,6 @@
 # Twitter endpoints test 
 # ./endpoints.sh <auth_token>
 
-
 auth_token=$1
 #endpoint=$2 # 0-14
 x_csrf_token=$(openssl rand -hex 16)
@@ -15,23 +14,14 @@ screen_name="jack"
 list_id=1860883 # @mashable - Social Media
 list_slug="social-media"
 
-# main.js - requires x-transaction-id header
-#bearer_token="AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
-
-# main.js alt
-#bearer_token="AAAAAAAAAAAAAAAAAAAAAMupswEAAAAANC5Yk%2FHGiZmGDRV3EhXMBO3uX08%3DEwAT9YySxXZXGrYScXeoKUaeyqXQFeNVWUW4SaZUvtegCUVjIi"
-
-# Twitter for Android
+# Twitter for Android - all work
 bearer_token='AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F'
 
-# Twitter for iPhone
+# Twitter for iPhone - all work
 #bearer_token="AAAAAAAAAAAAAAAAAAAAAAj4AQAAAAAAPraK64zCZ9CSzdLesbE7LB%2Bw4uE%3DVJQREvQNCZJNiz3rHO7lOXlkVOQkzzdsgu6wWgcazdMUaGoUGm"
 
 # Twitter for Mac - 3 only - UserWithProfileTweetsAndRepliesQueryV2 ListByRestId Retweeters
 #bearer_token="AAAAAAAAAAAAAAAAAAAAAIWCCAAAAAAA2C25AxqI%2BYCS7pdfJKRH8Xh19zA%3D8vpDZzPHaEJhd20MKVWp3UR38YoPpuTX7UD2cVYo3YNikubuxd"
-
-# Twitter for iPad - (bad)
-#bearer_token="AAAAAAAAAAAAAAAAAAAAAGHtAgAAAAAA%2Bx7ILXNILCqkSGIzy6faIHZ9s3Q%3DQy97w6SIrzE7lQwPJEYQBsArEE2fC25caFwRBvAGi456G09vGR"
 
 ####
 if [[ -z "$auth_token" ]]; then echo "Usage: $0 auth_token"; exit 1; fi
