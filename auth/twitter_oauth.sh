@@ -1,8 +1,5 @@
-#!/bin/bash
-# returns unusable oauth_token
-# Grab oauth token for use with Nitter (requires Twitter account). 
-# results: {"oauth_token":"xxxxxxxxxx-xxxxxxxxx","oauth_token_secret":"xxxxxxxxxxxxxxxxxxxxx"}
-# 
+#!/usr/bin/env bash
+# Grab oauth token for use with Nitter 
 
 username="$1"
 password="$2"
@@ -12,9 +9,6 @@ if [[ -z "$username" || -z "$password" ]]; then
   exit 1
 fi
 
-# Twitter for Android
-#consumerKey* = "3nVuSoBZnx6U4vzUxf5w"
-#consumerSecret* = "Bcs59EFbbsdF6Sl9Ng71smgStWEGwXXKSjYvPVt7qys"
 bearer_token='AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F'
 
 guest_token=$(curl -s -XPOST https://api.twitter.com/1.1/guest/activate.json -H "Authorization: Bearer ${bearer_token}" -d "grant_type=client_credentials" | jq -r '.guest_token')
