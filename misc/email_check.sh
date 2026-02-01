@@ -13,7 +13,7 @@ x_csrf_token=$(openssl rand -hex 16)
 
 if [[ -z "$auth_token" || -z "$email" ]]; then echo "Usage: $0 email@example.com (requires auth_token)"; exit 1; fi
 
-bearer_token='AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F'
+bearer_token='AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA'
 
 headers=(
   -H "Authorization: Bearer ${bearer_token}"
