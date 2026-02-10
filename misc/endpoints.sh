@@ -16,6 +16,8 @@ tweet_id=20 # @jack (also used for conversation_id)
 screen_name="jack"
 list_id=1860883 # @mashable - Social Media
 list_slug="social-media"
+print_headers=1 # [0|1]
+cookie_jar="cookies.txt"
 
 # Twitter for Android - all work
 bearer_token='AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F'
@@ -56,6 +58,7 @@ endpoints=(
   'BbGLL1ZfMibdFNWlk7a0Pw/ListTimeline'
   'oRJs8SLCRNRbQzuZG93_oA/UserTweets'
   'kkaJ0Mf34PZVarrxzLihjg/UserTweetsAndReplies'
+  'qIWNRQfRx-Rq2ybMont8rQ/HomeTimeline'
   'Y4Erk_-0hObvLpz0Iw3bzA/ConversationTimeline'
   'k3rtLsS9kG5hI-Jr0dTMCg/ConversationTimelineV2'
   'wfglZEC0MRgBdxMa_1a5YQ/Retweeters'
@@ -81,6 +84,7 @@ request_endpoint() {
     -H "User-Agent: ${user_agent}" 
     -H "X-Csrf-Token: ${x_csrf_token}"
     -H "Cookie: ct0=${x_csrf_token}; auth_token=${auth_token}"
+    -c "${cookie_jar}"
   )
   
   # Use x-client-transaction-id header if using main web bearer token
@@ -104,6 +108,11 @@ request_endpoint() {
   fi
   
   echo '-----'
+  if [[ "$print_headers" -gt 0 ]]; then
+    sed -En 's/^([^\t]*\t){5}//p' "${cookie_jar}" | column -t
+    echo '-----'
+  fi
+
   echo $URL
   sed -En -e 's/^([xH].*)\r/\1/p' <<< "${output}" |
     sort |
