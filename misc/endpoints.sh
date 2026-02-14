@@ -16,7 +16,8 @@ tweet_id=20 # @jack (also used for conversation_id)
 screen_name="jack"
 list_id=1860883 # @mashable - Social Media
 list_slug="social-media"
-print_headers=1 # [0|1]
+print_headers=0 # [0|1]
+print_cookies=0 # [0|1]
 cookie_jar="cookies.txt"
 
 # Twitter for Android - all work
@@ -99,22 +100,28 @@ request_endpoint() {
       URL=(${url}${endpoint} --data-urlencode "variables=${VARIABLES}" --data-urlencode "features=${FEATURES}")
   fi
 
-  output=$(curl -siG "${URL[@]}" "${headers[@]}" 2>&1 | egrep  '^x-rate|^HTTP|^\{"|^\[')
+  output=$(curl -siG "${URL[@]}" "${headers[@]}" 2>&1)
 
   if [[ "$save_output" -gt 0 ]]; then
-      egrep '^\{"|^\[' <<< "${output}" | tee "${json_file}" | jq -c
+      grep -E '^\{"|^\[' <<< "${output}" | tee "${json_file}" | jq -c
     else
-      egrep '^\{"|^\[' <<< "${output}" | jq -c
+      grep -E '^\{"|^\[' <<< "${output}" | jq -c
   fi
   
   echo '-----'
+  
   if [[ "$print_headers" -gt 0 ]]; then
+    sed '$d' <<< "${output}" | sed '$d'
+    echo '-----'
+  fi
+
+  if [[ "$print_cookies" -gt 0 ]]; then
     sed -En 's/^([^\t]*\t){5}//p' "${cookie_jar}" | column -t
     echo '-----'
   fi
 
   echo $URL
-  sed -En -e 's/^([xH].*)\r/\1/p' <<< "${output}" |
+  sed -En -e 's/^(x-rate.*|HTTP.*)\r/\1/p' <<< "${output}" |
     sort |
     cut -d\  -f2 |
     xargs |
