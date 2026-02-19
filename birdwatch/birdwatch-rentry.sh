@@ -4,7 +4,7 @@
 # requires: https://github.com/radude/rentry
 #           https://github.com/simonw/shot-scraper
 # direct tweet url or id as input
-# ex ./birwatch-fetch.sh https://x.com/elonmusk/status/1838337595970847103
+# ex ./birwatch-rentry.sh https://x.com/elonmusk/status/1838337595970847103
 
 #x_csrf_token="" #ct0
 #auth_token=""
@@ -52,5 +52,4 @@ birdwatch=$(
 )
 
 echo -e "![](${imgur_url})\n\nhttps://nitter.net/_/status/${tweet_id##*/}\n${birdwatch}" |
-  tee "/home/cmj/dev/twitter/birdwatch-archive/${tweet_id##*/}-ss-$d.md" |
   rentry new # | tee -a ~/rentry_urls
