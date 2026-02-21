@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Twitter endpoints test 
-# ./endpoints.sh <auth_token>
+# ./endpoints.sh <auth_token> (or source ~/.env-twitter)
 
 auth_token=$1
 x_csrf_token=$(openssl rand -hex 16) # ct0
@@ -13,12 +13,22 @@ user_agent="TwitterAndroid/10.21.1"
 user_id2=783214 # X
 user_id=12 # @jack
 tweet_id=20 # @jack (also used for conversation_id)
+birdwatch_id=1692558414105186796 # @elonmusk tweet with 36 proposed notes (1692558493255942213 is reply with helpful-rated note)
 screen_name="jack"
 list_id=1860883 # @mashable - Social Media
 list_slug="social-media"
 print_headers=0 # [0|1]
 print_cookies=0 # [0|1]
 cookie_jar="cookies.txt"
+
+###
+
+if [[ -z "$auth_token" && ! -f "$HOME/.env-twitter" ]]; then
+    echo "Error: auth_token not provided and not found in ~/.env-twitter"
+    exit 1
+  else
+    source "$HOME/.env-twitter"
+fi
 
 # Twitter for Android - all work
 bearer_token='AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F'
@@ -65,6 +75,7 @@ endpoints=(
   'wfglZEC0MRgBdxMa_1a5YQ/Retweeters'
   'WJbdU-1ay4MHL8nKqCZYUQ/Following'
   'kuFUYP9eV1FPoEy4N-pi7w/Followers'
+  '3G9Ms1POEEiF86dFhV-tTg/BirdwatchFetchNotes'
   '_-RuCOiTBRLm2IarGaeB3w/SimilarPosts'
   'qZ92r6KDO0_GZxVJGM33XA/AboutAccountQuery'
   '/1.1/account/verify_credentials.json'
@@ -76,9 +87,11 @@ request_endpoint() {
   # save output with file format
   #json_file="/tmp/${endpoint##*/}-$EPOCHSECONDS.json"
   json_file="${endpoint##*/}-$EPOCHSECONDS.json"
-  
+
+  if [[ "${endpoint}" == *BirdwatchFetchNotes ]]; then tweet_id="${birdwatch_id}"; fi
+
   VARIABLES='{"screen_name":"'"${screen_name}"'","screenName":"'"${screen_name}"'","screen_names":["x","jack"],"rawQuery":"'"${query}"'","query":"'"${query}"'","userId":"'"${user_id}"'","userIds":["'"${user_id}"'","'"${user_id2}"'"],"rest_id":"'"${user_id}"'","postId":"'"${tweet_id}"'","focalTweetId":"'"${tweet_id}"'","tweetId":"'"${tweet_id}"'","tweet_id":"'"${tweet_id}"'","query_source":"typed_query","count":'"${count}"',"querySource":"typed_query","product":"'"${product}"'","listId":"'"${list_id}"'","includePromotedContent":false,"withBirdwatchNotes":true,"withVoice":true,"withCommunity":false,"listSlug":"'"${list_slug}"'","withDownvotePerspective":true,"withReactionsMetadata":true,"withReactionsPerspective":true,"includeHasBirdwatchNotes":true}'
- FEATURES='{"android_graphql_skip_api_media_color_palette":false,"blue_business_profile_image_shape_enabled":false,"creator_subscriptions_subscription_count_enabled":false,"creator_subscriptions_tweet_preview_api_enabled":true,"freedom_of_speech_not_reach_fetch_enabled":false,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":false,"hidden_profile_likes_enabled":false,"highlights_tweets_tab_ui_enabled":false,"interactive_text_enabled":false,"longform_notetweets_consumption_enabled":true,"longform_notetweets_inline_media_enabled":false,"longform_notetweets_richtext_consumption_enabled":true,"longform_notetweets_rich_text_read_enabled":false,"responsive_web_edit_tweet_api_enabled":false,"responsive_web_enhance_cards_enabled":false,"responsive_web_graphql_exclude_directive_enabled":true,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"responsive_web_graphql_timeline_navigation_enabled":false,"responsive_web_media_download_video_enabled":false,"responsive_web_text_conversations_enabled":false,"responsive_web_twitter_article_tweet_consumption_enabled":false,"responsive_web_twitter_blue_verified_badge_is_enabled":true,"rweb_lists_timeline_redesign_enabled":true,"spaces_2022_h2_clipping":true,"spaces_2022_h2_spaces_communities":true,"standardized_nudges_misinfo":false,"subscriptions_verification_info_enabled":true,"subscriptions_verification_info_reason_enabled":true,"subscriptions_verification_info_verified_since_enabled":true,"super_follow_badge_privacy_enabled":false,"super_follow_exclusive_tweet_notifications_enabled":false,"super_follow_tweet_api_enabled":false,"super_follow_user_api_enabled":false,"tweet_awards_web_tipping_enabled":false,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":false,"tweetypie_unmention_optimization_enabled":false,"unified_cards_ad_metadata_container_dynamic_card_content_query_enabled":false,"verified_phone_label_enabled":false,"vibe_api_enabled":false,"view_counts_everywhere_api_enabled":false,"c9s_tweet_anatomy_moderator_badge_enabled":false,"rweb_video_timestamps_enabled":false,"rweb_tipjar_consumption_enabled":false,"creator_subscriptions_quote_tweet_preview_enabled":false,"articles_preview_enabled":false,"tweet_with_visibility_results_prefer_gql_media_interstitial_enabled":false,"communities_web_enable_tweet_community_results_fetch":false,"responsive_web_grok_analyze_post_followups_enabled":false,"responsive_web_grok_image_annotation_enabled":false,"premium_content_api_read_enabled":false,"responsive_web_grok_community_note_auto_translation_is_enabled":false,"rweb_video_screen_enabled":false,"responsive_web_profile_redirect_enabled":false,"responsive_web_grok_show_grok_translated_post":false,"responsive_web_grok_imagine_annotation_enabled":false,"responsive_web_grok_analyze_button_fetch_trends_enabled":false,"responsive_web_grok_share_attachment_enabled":false,"profile_label_improvements_pcf_label_in_post_enabled":false,"responsive_web_jetfuel_frame":false,"responsive_web_grok_analysis_button_from_backend":false,"hidden_profile_subscriptions_enabled":false,"responsive_web_twitter_article_notes_tab_enabled":false,"subscriptions_feature_can_gift_premium":false,"subscriptions_verification_info_is_identity_verified_enabled":false,"payments_enabled":false,"responsive_web_grok_annotations_enabled":false,"post_ctas_fetch_enabled":false,"profile_label_improvements_pcf_label_in_profile_enabled":false,"immersive_video_status_linkable_timestamps":false,"grok_translations_community_note_auto_translation_is_enabled":false,"grok_android_analyze_trend_fetch_enabled":false,"grok_translations_community_note_translation_is_enabled":false,"articles_api_enabled":false,"grok_translations_post_auto_translation_is_enabled":false,"grok_translations_timeline_user_bio_auto_translation_is_enabled":false}'
+  FEATURES='{"android_graphql_skip_api_media_color_palette":false,"blue_business_profile_image_shape_enabled":false,"creator_subscriptions_subscription_count_enabled":false,"creator_subscriptions_tweet_preview_api_enabled":true,"freedom_of_speech_not_reach_fetch_enabled":false,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":false,"hidden_profile_likes_enabled":false,"highlights_tweets_tab_ui_enabled":false,"interactive_text_enabled":false,"longform_notetweets_consumption_enabled":true,"longform_notetweets_inline_media_enabled":false,"longform_notetweets_richtext_consumption_enabled":true,"longform_notetweets_rich_text_read_enabled":false,"responsive_web_edit_tweet_api_enabled":false,"responsive_web_enhance_cards_enabled":false,"responsive_web_graphql_exclude_directive_enabled":true,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"responsive_web_graphql_timeline_navigation_enabled":false,"responsive_web_media_download_video_enabled":false,"responsive_web_text_conversations_enabled":false,"responsive_web_twitter_article_tweet_consumption_enabled":false,"responsive_web_twitter_blue_verified_badge_is_enabled":true,"rweb_lists_timeline_redesign_enabled":true,"spaces_2022_h2_clipping":true,"spaces_2022_h2_spaces_communities":true,"standardized_nudges_misinfo":false,"subscriptions_verification_info_enabled":true,"subscriptions_verification_info_reason_enabled":true,"subscriptions_verification_info_verified_since_enabled":true,"super_follow_badge_privacy_enabled":false,"super_follow_exclusive_tweet_notifications_enabled":false,"super_follow_tweet_api_enabled":false,"super_follow_user_api_enabled":false,"tweet_awards_web_tipping_enabled":false,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":false,"tweetypie_unmention_optimization_enabled":false,"unified_cards_ad_metadata_container_dynamic_card_content_query_enabled":false,"verified_phone_label_enabled":false,"vibe_api_enabled":false,"view_counts_everywhere_api_enabled":false,"c9s_tweet_anatomy_moderator_badge_enabled":false,"rweb_video_timestamps_enabled":false,"rweb_tipjar_consumption_enabled":false,"creator_subscriptions_quote_tweet_preview_enabled":false,"articles_preview_enabled":false,"tweet_with_visibility_results_prefer_gql_media_interstitial_enabled":false,"communities_web_enable_tweet_community_results_fetch":false,"responsive_web_grok_analyze_post_followups_enabled":false,"responsive_web_grok_image_annotation_enabled":false,"premium_content_api_read_enabled":false,"responsive_web_grok_community_note_auto_translation_is_enabled":false,"rweb_video_screen_enabled":false,"responsive_web_profile_redirect_enabled":false,"responsive_web_grok_show_grok_translated_post":false,"responsive_web_grok_imagine_annotation_enabled":false,"responsive_web_grok_analyze_button_fetch_trends_enabled":false,"responsive_web_grok_share_attachment_enabled":false,"profile_label_improvements_pcf_label_in_post_enabled":false,"responsive_web_jetfuel_frame":false,"responsive_web_grok_analysis_button_from_backend":false,"hidden_profile_subscriptions_enabled":false,"responsive_web_twitter_article_notes_tab_enabled":false,"subscriptions_feature_can_gift_premium":false,"subscriptions_verification_info_is_identity_verified_enabled":false,"payments_enabled":false,"responsive_web_grok_annotations_enabled":false,"post_ctas_fetch_enabled":false,"profile_label_improvements_pcf_label_in_profile_enabled":false,"immersive_video_status_linkable_timestamps":false,"grok_translations_community_note_auto_translation_is_enabled":false,"grok_android_analyze_trend_fetch_enabled":false,"grok_translations_community_note_translation_is_enabled":false,"articles_api_enabled":false,"grok_translations_post_auto_translation_is_enabled":false,"grok_translations_timeline_user_bio_auto_translation_is_enabled":false}'
 
   headers=(
     -H "Authorization: Bearer ${bearer_token}"
@@ -87,7 +100,7 @@ request_endpoint() {
     -H "Cookie: ct0=${x_csrf_token}; auth_token=${auth_token}"
     -c "${cookie_jar}"
   )
-  
+
   # Use x-client-transaction-id header if using main web bearer token
   if [[ "${bearer_token}" == *CpTnA ]]; then
     TID=$(curl -s "https://x-client-transaction-id-generator.xyz/generate-x-client-transaction-id?path=${path}${endpoint}" | jq -r '."x-client-transaction-id"')
@@ -107,9 +120,9 @@ request_endpoint() {
     else
       grep -E '^\{"|^\[' <<< "${output}" | jq -c
   fi
-  
+
   echo '-----'
-  
+
   if [[ "$print_headers" -gt 0 ]]; then
     sed '$d' <<< "${output}" | sed '$d'
     echo '-----'
@@ -130,7 +143,12 @@ request_endpoint() {
     done
 }
 
-PS3="Choose endpoint ('enter' for list, ^C to quit): "
+PS3="Choose endpoint ('enter' for list, 'q' to quit): "
 select endpoint in "${endpoints[@]}"; do
+  if [[ "$REPLY" =~ ^[Qq]$ ]]; then
+        echo "Exiting."
+        break
+  fi
+
   request_endpoint
 done
