@@ -11,7 +11,7 @@
 
 query="fish"
 product="Latest" # Latest | Top
-count=20 # 1-20
+count=100 # immutable at 20 (chronological) or 100 (almost all accounts) for UserTweets
 user_id=12 # @jack
 user_id2=783214 # X
 tweet_id=20 # @jack - just setting up my twttr
