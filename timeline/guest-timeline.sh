@@ -32,6 +32,7 @@ Options:
   -s, --save        Save output to a timestamped JSON file (<screen_name>-<epoch>.json)
   -o, --output FILE Save output to a specific file; use - for stdout (implies --save)
   -c, --sort-check  Print whether the timeline is sorted by likes or recency
+                    Not 100% accurate - accounts seem to need over 100 tweeets?
   -h, --help        Show this help message and exit
 
 Examples:
