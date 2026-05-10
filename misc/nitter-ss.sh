@@ -18,8 +18,8 @@ id=${id%%[^0-9]*}
 
 #echo "Grabbing ${nitter}/i/status/${id}"
 
-# --retina doubles size
+# --retina doubles size. if used, set chop to 0x75, otherwise 0x50
 shot-scraper -b firefox --retina -s '.main-thread' -h 2000 \
   "${nitter}/i/status/${id}" -o - |
-  magick png:- -gravity north -chop 0x50 ${id}.png &&
+  magick png:- -gravity north -chop 0x75 ${id}.png &&
   echo "${id}.png saved"
