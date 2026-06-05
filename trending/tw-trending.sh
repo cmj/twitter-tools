@@ -11,9 +11,10 @@
 # Four Republican senators crossed party lines to join Democrats, blocking a key House-passed bill aimed at tightening federal voter rules.
 # 2026-06-05 05:25:44 | tweets: 15062 | https://x.com/i/trending/2062873504043950224
 
-limit=25       # 1-25
+limit=25      # 1-25
 reverse=false # true for newest first
 sort_by=".core.created_at_ms"  # .core.created_at_ms | .core.category | .post_count
+title_only=false
 
 ###
 
@@ -27,17 +28,19 @@ usage() {
   echo "  -l  Result limit (1-25, default: ${limit})"
   echo "  -r  Reverse order (newest/highest first)"
   echo "  -s  Sort field: created_at_ms | category | post_count (default: created_at_ms)"
+  echo "  -t  Display title, story headlines only"
   exit 1
 }
 
-while getopts "l:rs:h" opt; do
+while getopts "l:rs:th" opt; do
   case $opt in
     l) limit="$OPTARG" ;;
     r) reverse=true ;;
     s) case "$OPTARG" in
          created_at_ms|category|post_count) sort_by="$OPTARG" ;;
          *) echo "Invalid sort field: $OPTARG"; usage ;;
-       esac ;;    
+       esac ;;
+    t) title_only=true ;;
     h) usage ;;
     *) usage ;;
   esac
@@ -56,7 +59,7 @@ headers=(
 request=$(curl -sG "${headers[@]}" "${url}" --data-urlencode "variables=${variables}")
 
 # pretty output
-jq -r --argjson rev "${reverse}" --arg sort_by "${sort_by}" '
+jq -r --argjson rev "${reverse}" --arg sort_by "${sort_by}" --argjson title_only "${title_only}" '
   [.data.story_topic.stories.items[].trend_results.result]
   | sort_by(
       if $sort_by == "post_count" then (.post_count | tonumber)
@@ -66,11 +69,11 @@ jq -r --argjson rev "${reverse}" --arg sort_by "${sort_by}" '
     )
   | if $rev then reverse else . end
   | to_entries[]
-  | "### \(.key + 1) [\(.value.core.category)] - \(.value.core.name)",
-    (if .value.core.hook then "\(.value.core.hook)" else empty end),
-    "\n\(.value.core.created_at_ms | (. / 1000 | floor) | strflocaltime("%Y-%m-%d %H:%M:%S")) | tweets: \(.value.post_count) | https://x.com/i/trending/\(.value.rest_id)"
-' <<< "${request}" |
-  mdcat |
-  ct
+  | "### \(.key + 1) [\(.value.core.category)] - \u001b[95m[\(.value.core.name)]\u001b[0m",
+    (if $title_only | not then
+      (if .value.core.hook then "\(.value.core.hook)" else empty end),
+      "\(.value.core.created_at_ms | (. / 1000 | floor) | strflocaltime("%Y-%m-%d %H:%M:%S")) | tweets: \(.value.post_count) | https://x.com/i/trending/\(.value.rest_id)\n"
+    else empty end)
+' <<< "${request}" #| mdcat | ct
 
 
