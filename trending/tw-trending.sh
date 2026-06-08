@@ -69,10 +69,10 @@ jq -r --argjson rev "${reverse}" --arg sort_by "${sort_by}" --argjson title_only
     )
   | if $rev then reverse else . end
   | to_entries[]
-  | "### \(.key + 1) [\(.value.core.category)] - \u001b[95m[\(.value.core.name)]\u001b[0m",
+  | "### \(.key + 1) [\(.value.core.category)] - \(.value.core.name)",
     (if $title_only | not then
       (if .value.core.hook then "\(.value.core.hook)" else empty end),
-      "\(.value.core.created_at_ms | (. / 1000 | floor) | strflocaltime("%Y-%m-%d %H:%M:%S")) | tweets: \(.value.post_count) | https://x.com/i/trending/\(.value.rest_id)\n"
+      "\n\(.value.core.created_at_ms | (. / 1000 | floor) | strflocaltime("%Y-%m-%d %H:%M:%S")) | tweets: \(.value.post_count) | https://x.com/i/trending/\(.value.rest_id)\n"
     else empty end)
 ' <<< "${request}" #| mdcat | ct
 
