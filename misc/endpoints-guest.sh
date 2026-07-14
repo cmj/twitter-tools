@@ -82,11 +82,23 @@ endpoints=(
   '/1.1/users/show.json'
 )
 
+guest_token_file="/tmp/twitter_guest_token"
+
+get_guest_token() {
+  # reuse cached token if it's less than 2 hours (120 min) old
+  if [[ -s "$guest_token_file" ]] && [[ -n $(find "$guest_token_file" -mmin -120) ]]; then
+    guest_token=$(<"$guest_token_file")
+  else
+    guest_token=$(curl -s -XPOST -H "Authorization: Bearer ${bearer_token}" "https://api.twitter.com/1.1/guest/activate.json" | jq -r '.guest_token')
+    echo -n "${guest_token}" > "$guest_token_file"
+  fi
+}
+
 request_endpoint() {
   # uncomment to save output
   json_file="/tmp/${endpoint##*/}-$EPOCHSECONDS.json"
-  
-  guest_token=$(curl -s -XPOST -H "Authorization: Bearer ${bearer_token}" "https://api.twitter.com/1.1/guest/activate.json" | jq -r '.guest_token')
+
+  get_guest_token
   URL="${url}${endpoint}"
   # domain expired
   #TID=$(curl -s "https://x-client-transaction-id-generator.xyz/generate-x-client-transaction-id?path=${path}${endpoint}" | jq -r '."x-client-transaction-id"')
