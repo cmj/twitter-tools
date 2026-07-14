@@ -83,6 +83,20 @@ BEARER_TOKEN = (
     "%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F"
 )
 
+# Bearer token used for --guest mode (no auth_token/cookie required, works
+# with SearchTimeline). Guest tokens issued against it are cached below so
+# repeated runs/pages don't hit activate.json every time.
+#
+# Left blank in the public version - fill this in yourself to enable --guest.
+# Without it, --guest will refuse to run and you'll need AUTH_TOKENS instead.
+GUEST_BEARER_TOKEN = ""
+
+# Guest tokens are valid for ~2 hours; cache the issued token here so we
+# don't call guest/activate.json on every page/run.
+GUEST_TOKEN_FILE = os.path.join(tempfile.gettempdir(), "timeline_scrape_guest_token")
+GUEST_TOKEN_MAX_AGE = 7200  # seconds
+GUEST_RATE_LIMIT_REFRESH_THRESHOLD = 1  # proactively rotate guest token at/below this many requests left
+
 URL = "https://api.twitter.com/graphql/gkjsKepM6gl_HmFWoWKfgg/SearchTimeline"
 
 FEATURES = {
@@ -190,7 +204,7 @@ def print_rate_limits(headers):
     reset = headers.get("x-rate-limit-reset")
     if remaining is None:
         print("x-rate-limit: (missing headers)")
-        return
+        return None
     reset_str = ""
     if reset:
         try:
@@ -198,6 +212,10 @@ def print_rate_limits(headers):
         except (ValueError, OSError):
             reset_str = reset
     print(f"\x1b[32m{remaining}/{limit}\x1b[0m reset: \x1b[94m{reset_str}\x1b[0m")
+    try:
+        return int(remaining)
+    except (TypeError, ValueError):
+        return None
 
 
 def load_token_idx(tokens_count):
@@ -228,6 +246,41 @@ def build_headers(csrf_token, auth_token):
         "Cookie": f"ct0={csrf_token}; auth_token={auth_token}",
     }
 
+def get_guest_token(session, force_refresh=False):
+    """Reuse the cached guest token if it's under GUEST_TOKEN_MAX_AGE old,
+    otherwise activate a new one and cache it to GUEST_TOKEN_FILE."""
+    if not force_refresh:
+        try:
+            if time.time() - os.path.getmtime(GUEST_TOKEN_FILE) < GUEST_TOKEN_MAX_AGE:
+                with open(GUEST_TOKEN_FILE) as f:
+                    token = f.read().strip()
+                if token:
+                    return token
+        except OSError:
+            pass
+
+    resp = session.post(
+        "https://api.twitter.com/1.1/guest/activate.json",
+        headers={"Authorization": f"Bearer {GUEST_BEARER_TOKEN}"},
+    )
+    try:
+        token = resp.json().get("guest_token")
+    except ValueError:
+        token = None
+    if not token:
+        sys.exit(f"[!] Failed to obtain guest token (status {resp.status_code}): {resp.text}")
+
+    with open(GUEST_TOKEN_FILE, "w") as f:
+        f.write(token)
+    return token
+
+def build_guest_headers(guest_token):
+    return {
+        "Authorization": f"Bearer {GUEST_BEARER_TOKEN}",
+        "User-Agent": "TwitterAndroid/10.21.1",
+        "x-guest-token": guest_token,
+    }
+
 def validate_date(value, flag):
     if not DATE_RE.match(value):
         print(
@@ -248,9 +301,11 @@ def build_query(user, until=None, since=None, max_id=None, since_id=None):
         query += f" max_id:{max_id}"
     return query
 
-def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=None, no_csv=False):
-    if not AUTH_TOKENS:
-        sys.exit("AUTH_TOKENS is empty - populate the list before running.")
+def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=None, no_csv=False, guest=False):
+    if guest and not GUEST_BEARER_TOKEN:
+        sys.exit("guest bearer_token not provided")
+    if not guest and not AUTH_TOKENS:
+        sys.exit("AUTH_TOKENS is empty - populate the list before running (or pass --guest).")
 
     csrf_token = secrets.token_hex(16)
     query = build_query(user, until=until, since=since, max_id=max_id, since_id=since_id)
@@ -293,8 +348,13 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
         return info_path
 
     session = requests.Session()
-    tokens_max = len(AUTH_TOKENS) - 1
-    token_idx = load_token_idx(len(AUTH_TOKENS))
+    if guest:
+        tokens_max = 0
+        token_idx = 0
+        guest_token = get_guest_token(session)
+    else:
+        tokens_max = len(AUTH_TOKENS) - 1
+        token_idx = load_token_idx(len(AUTH_TOKENS))
     count = 0
     pages_fetched = 0
     counter = 0  # unique tweets collected so far
@@ -307,8 +367,13 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
 
     while True:
         count_next = count + 1
-        auth_token = AUTH_TOKENS[token_idx]
-        headers = build_headers(csrf_token, auth_token)
+        if guest:
+            headers = build_guest_headers(guest_token)
+            token_label = f"guest …{guest_token[-4:]}"
+        else:
+            auth_token = AUTH_TOKENS[token_idx]
+            headers = build_headers(csrf_token, auth_token)
+            token_label = f"\x1b[1m{token_idx:02d}\x1b[0m …{auth_token[-4:]}"
 
         variables = {
             "rawQuery": query,
@@ -322,7 +387,7 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
         cursor_label = f"…{cursor[-24:]}" if cursor else "(start)"
         print(
             f"page \x1b[40m {count_next} \x1b[0m | elapsed: {int(time.time()-start)}s | "
-            f"token: \x1b[1m{token_idx:02d}\x1b[0m …{auth_token[-4:]} | "
+            f"token: {token_label} | "
             f"user: @{user} | cursor: {cursor_label} | tweets: {counter}"
         )
 
@@ -353,7 +418,7 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
         api_errors = data.get("errors")
         if api_errors:
             consecutive_errors += 1
-            print(f"[!] API error on token …{auth_token[-4:]} (status {resp.status_code}): {api_errors}")
+            print(f"[!] API error on token {token_label} (status {resp.status_code}): {api_errors}")
 
             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                 print(
@@ -370,12 +435,19 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
                 return dest
 
             backoff = min(BACKOFF_BASE * (2 ** (consecutive_errors - 1)), BACKOFF_MAX)
-            print(
-                f"   -> retrying with the next token in {backoff}s "
-                f"({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS} consecutive errors)"
-            )
-            token_idx = token_idx + 1 if token_idx < tokens_max else 0
-            save_token_idx(token_idx)
+            if guest:
+                print(
+                    f"   -> refreshing guest token, retrying in {backoff}s "
+                    f"({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS} consecutive errors)"
+                )
+                guest_token = get_guest_token(session, force_refresh=True)
+            else:
+                print(
+                    f"   -> retrying with the next token in {backoff}s "
+                    f"({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS} consecutive errors)"
+                )
+                token_idx = token_idx + 1 if token_idx < tokens_max else 0
+                save_token_idx(token_idx)
             time.sleep(backoff)
             continue
 
@@ -393,8 +465,9 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
                     f"(status {resp.status_code})"
                 )
             print(f"[*] All done - completed in {int(end-start)} seconds")
-            token_idx = token_idx + 1 if token_idx < tokens_max else 0
-            save_token_idx(token_idx)
+            if not guest:
+                token_idx = token_idx + 1 if token_idx < tokens_max else 0
+                save_token_idx(token_idx)
             csv_path = maybe_build_csv()
             status = "completed - hit --max-tweets" if hit_max else "completed - reached end of results"
             write_info(status, pages_fetched, csv_path)
@@ -412,7 +485,10 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
         last_date = (last_created or {}).get("legacy", {}).get("created_at", "").replace(" +0000", "")
         print(f"\x1b[1;96m{first_date} <----> {last_date}\x1b[0m", end=" | ")
 
-        print_rate_limits(resp.headers)
+        remaining = print_rate_limits(resp.headers)
+        if guest and remaining is not None and remaining <= GUEST_RATE_LIMIT_REFRESH_THRESHOLD:
+            print(f"[*] Guest token has {remaining} request(s) left - rotating to a fresh one")
+            guest_token = get_guest_token(session, force_refresh=True)
 
         page_ids = []
         for t in tweets:
@@ -439,16 +515,18 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
             )
             if stuck_count >= STUCK_GIVEUP or not next_cursor:
                 print("\u2717 Cursor pagination stalled - stopping here.")
-                token_idx = token_idx + 1 if token_idx < tokens_max else 0
-                save_token_idx(token_idx)
+                if not guest:
+                    token_idx = token_idx + 1 if token_idx < tokens_max else 0
+                    save_token_idx(token_idx)
                 csv_path = maybe_build_csv()
                 write_info("partial - cursor pagination stalled", pages_fetched, csv_path)
                 print(f"Partial results: {counter:,} unique tweets from @{user} saved to {dest}/")
                 return dest
 
         cursor = next_cursor
-        token_idx = token_idx + 1 if token_idx < tokens_max else 0
-        save_token_idx(token_idx)
+        if not guest:
+            token_idx = token_idx + 1 if token_idx < tokens_max else 0
+            save_token_idx(token_idx)
         count += 1
         time.sleep(INTERVAL)
 
@@ -457,14 +535,37 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
     print(f"Partial results: {counter:,} unique tweets from @{user} saved to {dest}/")
     return dest
 
-def get_first_url(entities):
-    urls = (entities or {}).get("urls") or []
-    if urls:
-        return urls[0].get("expanded_url", "")
+def get_media_url(media):
+    """Full-quality direct media URL for a media entity: highest-res jpg/png
+    for photos, highest-bitrate mp4 for videos/gifs."""
+    mtype = media.get("type")
+    if mtype == "photo":
+        return media.get("media_url_https", "")
+    if mtype in ("video", "animated_gif"):
+        variants = media.get("video_info", {}).get("variants", []) or []
+        mp4s = [v for v in variants if v.get("content_type") == "video/mp4" and v.get("url")]
+        if mp4s:
+            return max(mp4s, key=lambda v: v.get("bitrate") or 0)["url"]
     return ""
 
-def strip_tco(text):
-    return re.sub(r"https://t\.co/.*", "", text or "")
+def expand_entities(text, legacy):
+    """Replace every t.co link in `text` with its full expansion: direct
+    jpg/png/mp4 for media, expanded_url for plain links. Returns the
+    rewritten text plus the mapping (used to catch links note-tweets omit)."""
+    entities = legacy.get("entities", {}) or {}
+    media_list = (legacy.get("extended_entities", {}) or {}).get("media") or entities.get("media") or []
+    mapping = {}
+    for m in media_list:
+        tco, full = m.get("url"), get_media_url(m)
+        if tco and full:
+            mapping[tco] = full
+    for u in entities.get("urls", []) or []:
+        tco, expanded = u.get("url"), u.get("expanded_url")
+        if tco and expanded and tco not in mapping:
+            mapping[tco] = expanded
+    for tco, replacement in mapping.items():
+        text = text.replace(tco, replacement)
+    return text, mapping
 
 def clean_whitespace(t):
     if t is None:
@@ -503,12 +604,19 @@ def build_text(result):
     note_tweet = (
         result.get("note_tweet", {}).get("note_tweet_results", {}).get("result", {})
     )
-    base = note_tweet.get("text") or legacy.get("full_text", "")
+    note_text = note_tweet.get("text")
+    base = note_text or legacy.get("full_text", "")
     base = base.replace("&amp;", "&")
 
-    url = get_first_url(legacy.get("entities"))
-    if url:
-        base = f"{base} {url}"
+    base, mapping = expand_entities(base, legacy)
+
+    if note_text:
+        # note-tweet text is the full long-form body but doesn't inline the
+        # trailing media/link t.co the way legacy full_text does - append
+        # anything that didn't already land in the text.
+        extras = [full for full in mapping.values() if full not in base]
+        if extras:
+            base = f"{base} {' '.join(extras)}"
 
     quoted = result.get("quoted_status_result")
     if quoted:
@@ -525,9 +633,8 @@ def build_text(result):
         if q_screen_name:
             q_legacy = qresult.get("legacy", {}) or {}
             q_text = q_legacy.get("full_text", "").replace("&amp;", "&")
-            q_text = strip_tco(q_text)
-            q_url = get_first_url(q_legacy.get("entities"))
-            base += f" [@{q_screen_name}] {q_text}{q_url}"
+            q_text, _ = expand_entities(q_text, q_legacy)
+            base += f" [@{q_screen_name}] {q_text}"
         else:
             base += " [deleted tweet]"
 
@@ -549,7 +656,7 @@ def extract_row(entry):
     retweets = format_count(legacy.get("retweet_count"))
     likes = format_count(legacy.get("favorite_count"))
     views = format_count(result.get("views", {}).get("count"))
-    source = strip_html(legacy.get("source", ""))
+    source = strip_html(result.get("source", ""))
     birdwatch = birdwatch_value(result)
     conversation_id = legacy.get("conversation_id_str", "")
     screen_name = (
@@ -637,7 +744,6 @@ def parse_args():
         help=(
             "Adds until:<date> to the search query - results up to but NOT including that "
             "date/time. Formats: YYYY-MM-DD, YYYY-MM-DD_HH:MM:SS, or YYYY-MM-DD_HH:MM:SS_UTC. "
-            "Applied once when building the query; pagination after that is cursor-driven."
         ),
     )
     parser.add_argument(
@@ -660,6 +766,17 @@ def parse_args():
         dest="since_id",
         help=(
             "Adds since_id:<id> to the search query - only tweets newer than this tweet id."
+        ),
+    )
+    parser.add_argument(
+        "--guest",
+        dest="guest",
+        action="store_true",
+        help=(
+            "Use a guest token instead of an AUTH_TOKENS account cookie. No login "
+            "required, but subject to guest-tier rate limits and no rotation across "
+            "multiple accounts. The guest token is cached to a /tmp file and reused "
+            "for ~2 hours before a fresh one is activated."
         ),
     )
     parser.add_argument(
@@ -714,4 +831,5 @@ if __name__ == "__main__":
         max_id=args.max_id,
         since_id=since_id,
         no_csv=args.no_csv,
+        guest=args.guest,
     )
