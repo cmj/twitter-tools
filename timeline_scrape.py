@@ -138,6 +138,17 @@ FEATURES = {
     "responsive_web_grok_analyze_post_followups_enabled": False,
 }
 
+TWITTER_EPOCH_MS = 1288834974657  # snowflake epoch offset, in ms
+
+def snowflake_epoch_seconds(tweet_id):
+    return ((int(tweet_id) >> 22) + TWITTER_EPOCH_MS) / 1000
+
+def format_duration(seconds):
+    seconds = int(seconds)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+    return f"{hours} hours {minutes} minutes {seconds} seconds"
+
 def strip_html(s):
     return re.sub(r"<[^>]+>", "", s or "").strip()
 
@@ -387,7 +398,11 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
             csv_path = maybe_build_csv()
             status = "completed - hit --max-tweets" if hit_max else "completed - reached end of results"
             write_info(status, pages_fetched, csv_path)
-            print(f"Downloaded latest {counter:,} unique tweets from @{user} to {dest}/")
+            if since_id:
+                age = format_duration(time.time() - snowflake_epoch_seconds(since_id))
+                print(f"Downloaded {counter:,} tweets from @{user} after {since_id} ({age}) to {dest}/")
+            else:
+                print(f"Downloaded latest {counter:,} unique tweets from @{user} to {dest}/")
             return dest
 
         # date range of first/last tweet in this page
