@@ -8,8 +8,17 @@ The search query can optionally be bounded once at the start with:
   --until <date>    adds until:<date> to the query - tweets up to but NOT
                      including that date/time. Formats: YYYY-MM-DD,
                      YYYY-MM-DD_HH:MM:SS, or YYYY-MM-DD_HH:MM:SS_UTC.
+  --since <date>    adds since:<date> to the query - tweets from that
+                     date/time onward. Same formats as --until.
   --max-id <id>     adds max_id:<id> to the query - search backwards from
                      this tweet id.
+  --since-id <id>   adds since_id:<id> to the query - only tweets newer
+                     than this tweet id.
+
+--update is a shortcut useful for cronjobs: it looks up the most recently saved
+CSV for the given user, reads the last (highest) tweet id from it, and
+runs with --since-id set to that id - so only new tweets are fetched. If
+no prior CSV exists yet, it falls back to a normal full scan.
 
 When done, builds a CSV of all downloaded JSON with columns:
 Id,Date,Text,Replies,ReTweets,Likes,Views,Source,Birdwatch,ConversationId,Url
@@ -17,7 +26,11 @@ Id,Date,Text,Replies,ReTweets,Likes,Views,Source,Birdwatch,ConversationId,Url
 inline "[@user] quoted text url" or "[deleted tweet]" suffix
 
 Usage:
-    ./timeline_scrape.py <username> <max_tweets> [--until DATE] [--max-id ID]
+    ./timeline_scrape.py <username> [--max-tweets N] [--until DATE] [--since DATE] [--max-id ID] [--since-id ID] [--update] [--no-csv]
+
+    --max-tweets is optional but highly recommended - without it the script
+    keeps paging forever until it either runs out of tweets or every token
+    in AUTH_TOKENS gets rate-limited.
 """
 
 import argparse
@@ -28,6 +41,7 @@ import os
 import re
 import secrets
 import sys
+import tempfile
 import time
 from datetime import datetime
 import requests
@@ -37,13 +51,16 @@ import requests
 # which is below the 50 per 15 minute reset (there is a 24hr limit as well)
 # you can restart next batch using <max_id> passed as an option to the script,
 # if you exceed rate-limits, at a later time.
+# The last-used token index is persisted to TOKEN_IDX_FILE (see below), so if
+# you run this script back-to-back over many users, each run picks up
+# rotation where the last one left off instead of always hammering token 0.
 AUTH_TOKENS = [
   #"adfadfdf3443242323232adafafaf22222231313",
   #"adf232322423423423232adbcdfdfd3333333434",
   #"adfdfaf332442423423423424234234342424323"
 ]
 
-INTERVAL = 1  # sleep n seconds between successful requests
+INTERVAL = 0 # sleep n seconds between successful requests
 PRODUCT = "Latest"  # Latest | Top
 
 MAX_CONSECUTIVE_ERRORS = 5  # give up after this many API errors in a row
@@ -52,7 +69,14 @@ BACKOFF_MAX = 60  # seconds
 
 STUCK_GIVEUP = 5  # give up after this many pages in a row with no new tweets / no cursor advance
 
-UNTIL_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(_\d{2}:\d{2}:\d{2}(_UTC)?)?$")
+# Persists the last-used auth token index across separate invocations of this
+# script (e.g. looping over many users back-to-back). Without this, every
+# invocation restarts at AUTH_TOKENS[0], so runs that bail out quickly (no
+# new tweets, immediate end-of-results, etc.) hammer the first token instead
+# of rotating evenly through the whole list.
+TOKEN_IDX_FILE = os.path.join(tempfile.gettempdir(), "timeline_scrape_token_idx")
+
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(_\d{2}:\d{2}:\d{2}(_UTC)?)?$")
 
 BEARER_TOKEN = (
     "AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4"
@@ -165,6 +189,26 @@ def print_rate_limits(headers):
     print(f"\x1b[32m{remaining}/{limit}\x1b[0m reset: \x1b[94m{reset_str}\x1b[0m")
 
 
+def load_token_idx(tokens_count):
+    """Read the last-used auth token index from TOKEN_IDX_FILE so this run
+    picks up rotation where the previous invocation left off, rather than
+    always starting at AUTH_TOKENS[0]."""
+    try:
+        with open(TOKEN_IDX_FILE) as f:
+            idx = int(f.read().strip())
+    except (OSError, ValueError):
+        return 0
+    if tokens_count <= 0:
+        return 0
+    return idx % tokens_count
+
+def save_token_idx(idx):
+    try:
+        with open(TOKEN_IDX_FILE, "w") as f:
+            f.write(str(idx))
+    except OSError:
+        pass
+
 def build_headers(csrf_token, auth_token):
     return {
         "Authorization": f"Bearer {BEARER_TOKEN}",
@@ -173,42 +217,81 @@ def build_headers(csrf_token, auth_token):
         "Cookie": f"ct0={csrf_token}; auth_token={auth_token}",
     }
 
-def validate_until(value):
-    if not UNTIL_RE.match(value):
+def validate_date(value, flag):
+    if not DATE_RE.match(value):
         print(
-            f"\u26a0\ufe0f  --until value '{value}' doesn't match "
+            f"[!] {flag} value '{value}' doesn't match "
             f"YYYY-MM-DD[_HH:MM:SS[_UTC]] - passing it through to the query as-is."
         )
     return value
 
-def build_query(user, until=None, max_id=None):
+def build_query(user, until=None, since=None, max_id=None, since_id=None):
     query = f"include:nativeretweets from:{user}"
+    if since:
+        query += f" since:{validate_date(since, '--since')}"
     if until:
-        query += f" until:{validate_until(until)}"
+        query += f" until:{validate_date(until, '--until')}"
+    if since_id:
+        query += f" since_id:{since_id}"
     if max_id:
         query += f" max_id:{max_id}"
     return query
 
-def scrape(user, max_tweets, until=None, max_id=None):
+def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=None, no_csv=False):
     if not AUTH_TOKENS:
         sys.exit("AUTH_TOKENS is empty - populate the list before running.")
 
     csrf_token = secrets.token_hex(16)
-    query = build_query(user, until=until, max_id=max_id)
+    query = build_query(user, until=until, since=since, max_id=max_id, since_id=since_id)
 
     now = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    dest = f"{user}_max-{max_tweets}_{now}"
+    dest = f"{user}-{now}"
     os.makedirs(dest, exist_ok=True)
+
+    def maybe_build_csv():
+        if no_csv:
+            # print(f"--no-csv set - skipping CSV write (raw JSON pages remain in {dest}/)")
+            return None
+        return build_csv(dest, user)
+
+    def write_info(status, pages_fetched, csv_path):
+        elapsed = int(time.time() - start)
+        lines = [
+            f"user: @{user}",
+            f"query: {query}",
+            "",
+            f"status: {status}",
+            f"finished: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"elapsed_seconds: {elapsed}",
+            f"pages_fetched: {pages_fetched}",
+            f"unique_tweets: {counter}",
+            f"csv: {csv_path if csv_path else '(none written)'}",
+            "",
+            "options:",
+            f"  max_tweets: {max_tweets if max_tweets is not None else 'unbounded'}",
+            f"  since: {since or '(none)'}",
+            f"  until: {until or '(none)'}",
+            f"  since_id: {since_id or '(none)'}",
+            f"  max_id: {max_id or '(none)'}",
+            f"  no_csv: {no_csv}",
+        ]
+        info_path = os.path.join(dest, "info.txt")
+        with open(info_path, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        # print(f"Info written to {info_path}")
+        return info_path
 
     session = requests.Session()
     tokens_max = len(AUTH_TOKENS) - 1
-    token_idx = 0
+    token_idx = load_token_idx(len(AUTH_TOKENS))
     count = 0
+    pages_fetched = 0
     counter = 0  # unique tweets collected so far
     consecutive_errors = 0
     stuck_count = 0
     seen_ids = set()
     cursor = None
+    exit_status = "completed"
     start = time.time()
 
     while True:
@@ -248,22 +331,30 @@ def scrape(user, max_tweets, until=None, max_id=None):
             print(f"!! non-JSON response (status {resp.status_code}), saving raw and stopping")
             with open(out_path, "w") as f:
                 f.write(resp.text)
+            pages_fetched += 1
+            exit_status = f"stopped - non-JSON response (status {resp.status_code})"
             break
 
         with open(out_path, "w") as f:
             json.dump(data, f)
+        pages_fetched += 1
 
         api_errors = data.get("errors")
         if api_errors:
             consecutive_errors += 1
-            print(f"!! API error on token …{auth_token[-4:]} (status {resp.status_code}): {api_errors}")
+            print(f"[!] API error on token …{auth_token[-4:]} (status {resp.status_code}): {api_errors}")
 
             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                 print(
-                    f"\u2717 {consecutive_errors} consecutive API errors - giving up "
+                    f"[!] {consecutive_errors} consecutive API errors - giving up "
                     f"(this usually means the backend is down, not a single bad token)."
                 )
-                build_csv(dest, user)
+                csv_path = maybe_build_csv()
+                write_info(
+                    f"partial - {consecutive_errors} consecutive API errors, gave up",
+                    pages_fetched,
+                    csv_path,
+                )
                 print(f"Partial results: {counter:,} unique tweets from @{user} saved to {dest}/")
                 return dest
 
@@ -273,6 +364,7 @@ def scrape(user, max_tweets, until=None, max_id=None):
                 f"({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS} consecutive errors)"
             )
             token_idx = token_idx + 1 if token_idx < tokens_max else 0
+            save_token_idx(token_idx)
             time.sleep(backoff)
             continue
 
@@ -281,16 +373,20 @@ def scrape(user, max_tweets, until=None, max_id=None):
         tweets = tweet_entries(entries)
         next_cursor = get_cursor(entries, "Bottom")
 
-        if len(tweets) == 0 or counter >= max_tweets:
+        hit_max = max_tweets is not None and counter >= max_tweets
+        if len(tweets) == 0 or hit_max:
             end = time.time()
-            if len(tweets) == 0 and counter < max_tweets:
+            if len(tweets) == 0 and not hit_max:
                 print(
-                    f"\u26a0\ufe0f  Search index returned 0 tweets on this page "
-                    f"(status {resp.status_code}, no 'errors' field) - this looks like a "
-                    f"genuine end of available results, not a token failure."
+                    f"[*] Search index returned 0 tweets on this page "
+                    f"(status {resp.status_code})"
                 )
-            print(f"\u2728 All done - completed in {int(end-start)} seconds")
-            build_csv(dest, user)
+            print(f"[*] All done - completed in {int(end-start)} seconds")
+            token_idx = token_idx + 1 if token_idx < tokens_max else 0
+            save_token_idx(token_idx)
+            csv_path = maybe_build_csv()
+            status = "completed - hit --max-tweets" if hit_max else "completed - reached end of results"
+            write_info(status, pages_fetched, csv_path)
             print(f"Downloaded latest {counter:,} unique tweets from @{user} to {dest}/")
             return dest
 
@@ -323,21 +419,27 @@ def scrape(user, max_tweets, until=None, max_id=None):
         else:
             stuck_count += 1
             print(
-                f"\u26a0\ufe0f  No new tweets / cursor didn't advance "
+                f"[!] No new tweets / cursor didn't advance "
                 f"({stuck_count}/{STUCK_GIVEUP} stuck pages)"
             )
             if stuck_count >= STUCK_GIVEUP or not next_cursor:
                 print("\u2717 Cursor pagination stalled - stopping here.")
-                build_csv(dest, user)
+                token_idx = token_idx + 1 if token_idx < tokens_max else 0
+                save_token_idx(token_idx)
+                csv_path = maybe_build_csv()
+                write_info("partial - cursor pagination stalled", pages_fetched, csv_path)
                 print(f"Partial results: {counter:,} unique tweets from @{user} saved to {dest}/")
                 return dest
 
         cursor = next_cursor
         token_idx = token_idx + 1 if token_idx < tokens_max else 0
+        save_token_idx(token_idx)
         count += 1
         time.sleep(INTERVAL)
 
-    build_csv(dest, user)
+    csv_path = maybe_build_csv()
+    write_info(exit_status, pages_fetched, csv_path)
+    print(f"Partial results: {counter:,} unique tweets from @{user} saved to {dest}/")
     return dest
 
 def get_first_url(entities):
@@ -459,6 +561,10 @@ def build_csv(dest, user):
             if row and row[0]:
                 rows[row[0]] = row  # dedup by tweet id, last write wins
 
+    if not rows:
+        print(f"No tweets found for @{user} - skipping CSV write.")
+        return None
+
     csv_path = f"{dest}.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -472,13 +578,44 @@ def build_csv(dest, user):
     print(f"CSV written to {csv_path} ({len(rows)} unique tweets)")
     return csv_path
 
+def find_latest_csv(user):
+    """Find the most recently written CSV for this user, matching the
+    `{user}_max-*_*.csv` naming produced by build_csv(). Returns None if
+    none exist yet."""
+    candidates = glob.glob(f"{user}-*.csv")
+    if not candidates:
+        return None
+    return max(candidates, key=os.path.getmtime)
+
+def last_tweet_id_from_csv(csv_path):
+    """Rows are written in ascending Id order, so the last data row holds
+    the newest tweet id. Returns None if the file has no data rows."""
+    last_id = None
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        next(reader, None)  # skip header
+        for row in reader:
+            if row and row[0]:
+                last_id = row[0]
+    return last_id
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Scrape all tweets from a user via X's SearchTimeline GraphQL endpoint, "
         "paginating with the response cursor."
     )
     parser.add_argument("user", help="username to scrape (without @)")
-    parser.add_argument("max_tweets", type=int, help="stop once this many unique tweets are collected")
+    parser.add_argument(
+        "--max-tweets",
+        dest="max_tweets",
+        type=int,
+        default=None,
+        help=(
+            "Stop once this many unique tweets are collected. Highly recommended - "
+            "without it the script runs forever, page after page, until it either "
+            "runs out of tweets or every token in AUTH_TOKENS gets rate-limited."
+        ),
+    )
     parser.add_argument(
         "--until",
         dest="until",
@@ -489,15 +626,77 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--since",
+        dest="since",
+        help=(
+            "Adds since:<date> to the search query - results from that date/time onward. "
+            "Formats: YYYY-MM-DD, YYYY-MM-DD_HH:MM:SS, or YYYY-MM-DD_HH:MM:SS_UTC."
+        ),
+    )
+    parser.add_argument(
         "--max-id",
         dest="max_id",
         help=(
-            "Adds max_id:<id> to the search query to search backwards from this tweet id. "
-            "Applied once when building the query; pagination after that is cursor-driven."
+            "Adds max_id:<id> to the search query to search backwards from this tweet id."
+        ),
+    )
+    parser.add_argument(
+        "--since-id",
+        dest="since_id",
+        help=(
+            "Adds since_id:<id> to the search query - only tweets newer than this tweet id."
+        ),
+    )
+    parser.add_argument(
+        "--no-csv",
+        dest="no_csv",
+        action="store_true",
+        help="Disable CSV writes entirely - only the raw per-page JSON files are saved.",
+    )
+    parser.add_argument(
+        "--update",
+        dest="update",
+        action="store_true",
+        help=(
+            "Look for the most recently saved CSV for this user, read the last (highest) "
+            "tweet id from it, and use that as --since-id for this run - i.e. only fetch "
+            "tweets newer than what you already have. If no prior CSV is found, runs a "
+            "normal full scan instead. Ideal for cronjobs. Ignored if --since-id is also "
+            "given explicitly."
         ),
     )
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
-    scrape(args.user, args.max_tweets, until=args.until, max_id=args.max_id)
+
+    since_id = args.since_id
+    if args.update:
+        if since_id:
+            print("[!] --since-id was given explicitly - ignoring --update.")
+        else:
+            latest_csv = find_latest_csv(args.user)
+            if latest_csv:
+                last_id = last_tweet_id_from_csv(latest_csv)
+                if last_id:
+                    since_id = last_id
+                    print(f"--update: found {latest_csv}, resuming from since_id:{since_id}")
+                else:
+                    print(f"--update: {latest_csv} has no data rows - running a full scan instead.")
+            else:
+                print(f"--update: no prior CSV found for @{args.user} - running a full scan instead.")
+        if args.no_csv:
+            print(
+                "[!] --update with --no-csv means this run won't leave a CSV behind for "
+                "the *next* --update to read from."
+            )
+
+    scrape(
+        args.user,
+        args.max_tweets,
+        until=args.until,
+        since=args.since,
+        max_id=args.max_id,
+        since_id=since_id,
+        no_csv=args.no_csv,
+    )
