@@ -654,6 +654,7 @@ def extract_row(entry):
     text = build_text(result)
     replies = format_count(legacy.get("reply_count"))
     retweets = format_count(legacy.get("retweet_count"))
+    quotes = format_count(legacy.get("quote_count"))
     likes = format_count(legacy.get("favorite_count"))
     views = format_count(result.get("views", {}).get("count"))
     source = strip_html(result.get("source", ""))
@@ -668,7 +669,7 @@ def extract_row(entry):
     )
     url = f"https://x.com/{screen_name}/status/{tweet_id}" if tweet_id else ""
 
-    return [tweet_id, date, text, replies, retweets, likes, views, source, birdwatch, conversation_id, url]
+    return [tweet_id, date, text, replies, retweets, quotes, likes, views, source, birdwatch, conversation_id, url]
 
 def build_csv(dest, user):
     rows = {}
@@ -691,7 +692,7 @@ def build_csv(dest, user):
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(
-            ["Id", "Date", "Text", "Replies", "ReTweets", "Likes", "Views", "Source", "Birdwatch", "ConversationId", "Url"]
+            ["Id", "Date", "Text", "Replies", "ReTweets", "Quotes", "Likes", "Views", "Source", "Birdwatch", "ConversationId", "Url"]
         )
         # ascending, unique by Id
         for tid in sorted(rows.keys(), key=lambda x: int(x) if x.isdigit() else 0):
@@ -744,6 +745,7 @@ def parse_args():
         help=(
             "Adds until:<date> to the search query - results up to but NOT including that "
             "date/time. Formats: YYYY-MM-DD, YYYY-MM-DD_HH:MM:SS, or YYYY-MM-DD_HH:MM:SS_UTC. "
+            "Applied once when building the query; pagination after that is cursor-driven."
         ),
     )
     parser.add_argument(
