@@ -23,7 +23,8 @@ no prior CSV exists yet, it falls back to a normal full scan.
 When done, builds a CSV of all downloaded JSON with columns:
 Id,Date,Text,Replies,ReTweets,Likes,Views,Source,Birdwatch,ConversationId,Url
 (text includes the tweet's first linked URL and, for quote-tweets, an
-inline "[@user] quoted text url" or "[deleted tweet]" suffix
+inline "[@user] quoted text url", "[quote unavailable: url]" (blocked/
+suspended/protected quote), or "[deleted tweet]" suffix
 
 Usage:
     ./timeline_scrape.py <username> [--max-tweets N] [--until DATE] [--since DATE] [--max-id ID] [--since-id ID] [--update] [--no-csv]
@@ -599,6 +600,22 @@ def birdwatch_value(result):
         return pivot["destinationUrl"].replace("twitter", "x", 1)
     return ""
 
+def quote_unavailable_label(legacy, qresult):
+    """Build a label for a quoted tweet whose result is TweetUnavailable
+    (blocked, suspended, protected, deleted - the API doesn't always say
+    which). Prefers the API's own `reason` when present, otherwise falls
+    back to a generic label plus the permalink so the tweet is still
+    traceable."""
+    permalink = (legacy.get("quoted_status_permalink", {}) or {}).get("expanded", "")
+    reason = qresult.get("reason")
+    if reason:
+        label = f"quote unavailable ({reason})"
+    else:
+        label = "quote unavailable"
+    if permalink:
+        return f"{label}: {permalink}"
+    return label
+
 def build_text(result):
     legacy = result.get("legacy", {}) or {}
     note_tweet = (
@@ -635,6 +652,8 @@ def build_text(result):
             q_text = q_legacy.get("full_text", "").replace("&amp;", "&")
             q_text, _ = expand_entities(q_text, q_legacy)
             base += f" [@{q_screen_name}] {q_text}"
+        elif qresult.get("__typename") == "TweetUnavailable":
+            base += f" [{quote_unavailable_label(legacy, qresult)}]"
         else:
             base += " [deleted tweet]"
 

@@ -108,6 +108,23 @@ def expand_entities(text, legacy):
         text = text.replace(tco, replacement)
     return text, mapping
 
+def quote_unavailable_label(result, qresult):
+    """Build a label for a quoted tweet whose result is TweetUnavailable
+    (blocked, suspended, protected, deleted - the API doesn't always say
+    which). Prefers the API's own `reason` when present, otherwise falls
+    back to a generic label plus the permalink so the tweet is still
+    traceable."""
+    legacy = result.get("legacy", {}) or {}
+    permalink = (legacy.get("quoted_status_permalink", {}) or {}).get("expanded", "")
+    reason = qresult.get("reason")
+    if reason:
+        label = f"quote unavailable ({reason})"
+    else:
+        label = "quote unavailable"
+    if permalink:
+        return f"{label}: {permalink}"
+    return label
+
 def build_text(result):
     legacy = result.get("legacy", {}) or {}
     note_tweet = (
@@ -144,6 +161,8 @@ def build_text(result):
             q_text = q_legacy.get("full_text", "").replace("&amp;", "&")
             q_text, _ = expand_entities(q_text, q_legacy)
             base += f" [@{q_screen_name}] {q_text}"
+        elif qresult.get("__typename") == "TweetUnavailable":
+            base += f" [{quote_unavailable_label(result, qresult)}]"
         else:
             base += " [deleted tweet]"
 
