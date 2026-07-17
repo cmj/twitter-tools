@@ -41,6 +41,7 @@ fieldnames = [
     "Text",
     "Replies",
     "ReTweets",
+    "Quotes",
     "Likes",
     "Views",
     "Source",
