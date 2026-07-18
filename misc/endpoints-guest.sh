@@ -22,7 +22,7 @@ user_agent='User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101
 #bearer_token='AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA'
 
 # Twitter for Android - all work
-#bearer_token='AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F'
+bearer_token='AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F'
 
 # Twitter for iPhone - all work
 #bearer_token="AAAAAAAAAAAAAAAAAAAAAAj4AQAAAAAAPraK64zCZ9CSzdLesbE7LB%2Bw4uE%3DVJQREvQNCZJNiz3rHO7lOXlkVOQkzzdsgu6wWgcazdMUaGoUGm"
@@ -35,13 +35,6 @@ user_agent='User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101
 
 # Ads (limited)
 #bearer_token='AAAAAAAAAAAAAAAAAAAAAPnA9gAAAAAAZHpqKYoDdMCaqTUBktzAdK38BGk%3DLNsI9r2BHSjZ7cl5wD6Sh6NhxwZd2j8lXDSd6GDoQVYBlzx5Ff'
-
-# Ads
-bearer_token="AAAAAAAAAAA\
-AAAAAAAAAAGUqDgEAAAAAxxUx\
-nzaWND%2BqIZQZtUiIn0WBOqo\
-%3DwUQLAtFWub7fLUrVcS6VWj\
-6bGYIN54DofXGWKApKmKWQjldULK"
 
 ####
 domain='https://x.com'
