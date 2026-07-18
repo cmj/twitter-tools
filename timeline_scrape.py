@@ -457,21 +457,18 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
         tweets = tweet_entries(entries)
         next_cursor = get_cursor(entries, "Bottom")
 
-        hit_max = max_tweets is not None and counter >= max_tweets
-        if len(tweets) == 0 or hit_max:
+        if len(tweets) == 0:
             end = time.time()
-            if len(tweets) == 0 and not hit_max:
-                print(
-                    f"[*] Search index returned 0 tweets on this page "
-                    f"(status {resp.status_code})"
-                )
+            print(
+                f"[*] Search index returned 0 tweets on this page "
+                f"(status {resp.status_code})"
+            )
             print(f"[*] All done - completed in {int(end-start)} seconds")
             if not guest:
                 token_idx = token_idx + 1 if token_idx < tokens_max else 0
                 save_token_idx(token_idx)
             csv_path = maybe_build_csv()
-            status = "completed - hit --max-tweets" if hit_max else "completed - reached end of results"
-            write_info(status, pages_fetched, csv_path)
+            write_info("completed - reached end of results", pages_fetched, csv_path)
             if since_id:
                 age = format_duration(time.time() - snowflake_epoch_seconds(since_id))
                 print(f"Downloaded {counter:,} tweets from @{user} after {since_id} ({age}) to {dest}/")
@@ -504,6 +501,21 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
         new_ids = [pid for pid in page_ids if pid not in seen_ids]
         seen_ids.update(page_ids)
         counter = len(seen_ids)
+
+        if max_tweets is not None and counter >= max_tweets:
+            end = time.time()
+            print(f"[*] All done - completed in {int(end-start)} seconds")
+            if not guest:
+                token_idx = token_idx + 1 if token_idx < tokens_max else 0
+                save_token_idx(token_idx)
+            csv_path = maybe_build_csv()
+            write_info("completed - hit --max-tweets", pages_fetched, csv_path)
+            if since_id:
+                age = format_duration(time.time() - snowflake_epoch_seconds(since_id))
+                print(f"Downloaded {counter:,} tweets from @{user} after {since_id} ({age}) to {dest}/")
+            else:
+                print(f"Downloaded latest {counter:,} unique tweets from @{user} to {dest}/")
+            return dest
 
         made_progress = bool(new_ids) and next_cursor and next_cursor != cursor
         if made_progress:
@@ -616,13 +628,29 @@ def quote_unavailable_label(legacy, qresult):
         return f"{label}: {permalink}"
     return label
 
+def leading_reply_mentions(legacy):
+    entities = legacy.get("entities", {}) or {}
+    mentions = entities.get("user_mentions", []) or []
+    display_start = (legacy.get("display_text_range") or [0])[0]
+    leading = [
+        m for m in mentions
+        if (m.get("indices") or [None])[0] is not None
+        and m["indices"][0] < display_start
+    ]
+    leading.sort(key=lambda m: m["indices"][0])
+    names = [m.get("screen_name") for m in leading if m.get("screen_name")]
+    return " ".join(f"@{n}" for n in names) + " " if names else ""
+
 def build_text(result):
     legacy = result.get("legacy", {}) or {}
     note_tweet = (
         result.get("note_tweet", {}).get("note_tweet_results", {}).get("result", {})
     )
     note_text = note_tweet.get("text")
-    base = note_text or legacy.get("full_text", "")
+    if note_text:
+        base = leading_reply_mentions(legacy) + note_text
+    else:
+        base = legacy.get("full_text", "")
     base = base.replace("&amp;", "&")
 
     base, mapping = expand_entities(base, legacy)
