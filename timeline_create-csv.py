@@ -42,9 +42,6 @@ def format_count(n):
         return ""
 
 def get_entries(data):
-    """Flatten entries across every instruction (tweets can arrive via
-    TimelineAddEntries, and cursors via either an entry in that list or a
-    standalone TimelineReplaceEntry instruction)."""
     try:
         instructions = data["data"]["search_by_raw_query"]["search_timeline"]["timeline"]["instructions"]
     except (KeyError, TypeError):
@@ -77,8 +74,6 @@ def birdwatch_value(result):
     return ""
 
 def get_media_url(media):
-    """Full-quality direct media URL for a media entity: highest-res jpg/png
-    for photos, highest-bitrate mp4 for videos/gifs."""
     mtype = media.get("type")
     if mtype == "photo":
         return media.get("media_url_https", "")
@@ -90,9 +85,6 @@ def get_media_url(media):
     return ""
 
 def expand_entities(text, legacy):
-    """Replace every t.co link in `text` with its full expansion: direct
-    jpg/png/mp4 for media, expanded_url for plain links. Returns the
-    rewritten text plus the mapping (used to catch links note-tweets omit)."""
     entities = legacy.get("entities", {}) or {}
     media_list = (legacy.get("extended_entities", {}) or {}).get("media") or entities.get("media") or []
     mapping = {}
@@ -109,11 +101,6 @@ def expand_entities(text, legacy):
     return text, mapping
 
 def quote_unavailable_label(result, qresult):
-    """Build a label for a quoted tweet whose result is TweetUnavailable
-    (blocked, suspended, protected, deleted - the API doesn't always say
-    which). Prefers the API's own `reason` when present, otherwise falls
-    back to a generic label plus the permalink so the tweet is still
-    traceable."""
     legacy = result.get("legacy", {}) or {}
     permalink = (legacy.get("quoted_status_permalink", {}) or {}).get("expanded", "")
     reason = qresult.get("reason")
@@ -125,13 +112,29 @@ def quote_unavailable_label(result, qresult):
         return f"{label}: {permalink}"
     return label
 
+def leading_reply_mentions(legacy):
+    entities = legacy.get("entities", {}) or {}
+    mentions = entities.get("user_mentions", []) or []
+    display_start = (legacy.get("display_text_range") or [0])[0]
+    leading = [
+        m for m in mentions
+        if (m.get("indices") or [None])[0] is not None
+        and m["indices"][0] < display_start
+    ]
+    leading.sort(key=lambda m: m["indices"][0])
+    names = [m.get("screen_name") for m in leading if m.get("screen_name")]
+    return " ".join(f"@{n}" for n in names) + " " if names else ""
+
 def build_text(result):
     legacy = result.get("legacy", {}) or {}
     note_tweet = (
         result.get("note_tweet", {}).get("note_tweet_results", {}).get("result", {})
     )
     note_text = note_tweet.get("text")
-    base = note_text or legacy.get("full_text", "")
+    if note_text:
+        base = leading_reply_mentions(legacy) + note_text
+    else:
+        base = legacy.get("full_text", "")
     base = base.replace("&amp;", "&")
 
     base, mapping = expand_entities(base, legacy)
@@ -200,8 +203,6 @@ def extract_row(entry):
     return [tweet_id, date, text, replies, retweets, quotes, likes, views, source, birdwatch, conversation_id, url]
 
 def collect_rows(dest):
-    """Parse every *.json page in `dest` into {tweet_id: row}, deduped by id
-    (last write wins)."""
     rows = {}
     for fp in sorted(glob.glob(os.path.join(dest, "*.json"))):
         with open(fp) as f:
