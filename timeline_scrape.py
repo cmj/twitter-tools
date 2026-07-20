@@ -3,6 +3,9 @@
 timeline_scrape.py
 
 Grab all raw tweets and replies from a user timeline via the SearchTimeline
+endpoint. It will fallback to UserTweetsAndReplies if the account is
+shadowbanned/de-indexed, however there is a rough limitation of ~3200 tweets
+through it.
 
 The search query can optionally be bounded once at the start with:
   --until <date>    adds until:<date> to the query - tweets up to but NOT
@@ -27,7 +30,7 @@ inline "[@user] quoted text url", "[quote unavailable: url]" (blocked/
 suspended/protected quote), or "[deleted tweet]" suffix
 
 Usage:
-    ./timeline_scrape.py <username> [--max-tweets N] [--until DATE] [--since DATE] [--max-id ID] [--since-id ID] [--update] [--no-csv]
+    ./timeline_scrape.py <username> [--max-tweets N] [--until DATE] [--since DATE] [--max-id ID] [--since-id ID] [--update] [--no-csv] [--alt] [--yes]
 
     --max-tweets is optional but highly recommended - without it the script
     keeps paging forever until it either runs out of tweets or every token
@@ -47,7 +50,10 @@ import time
 from datetime import datetime
 import requests
 
-# add at least 20 auth_tokens here to be safe.
+# auth_tokens are preferred to be loaded from an auth_tokens.txt file
+# next to this script (one per line).
+
+# add at least 20 auth_tokens to be safe.
 # each account will make one request every 20 seconds (900sec / 20 = 45 requests)
 # which is below the 50 per 15 minute reset (there is a 24hr limit as well)
 # you can restart next batch using <max_id> passed as an option to the script,
@@ -55,7 +61,22 @@ import requests
 # The last-used token index is persisted to TOKEN_IDX_FILE (see below), so if
 # you run this script back-to-back over many users, each run picks up
 # rotation where the last one left off instead of always hammering token 0.
-AUTH_TOKENS = [
+AUTH_TOKENS_FILE = os.environ.get(
+    "TWITTER_AUTH_TOKENS_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth_tokens.txt"),
+)
+
+def _load_auth_tokens():
+    try:
+        with open(AUTH_TOKENS_FILE) as f:
+            return [
+                line.strip() for line in f
+                if line.strip() and not line.strip().startswith("#")
+            ]
+    except OSError:
+        return []
+
+AUTH_TOKENS = _load_auth_tokens() or [
   #"adfadfdf3443242323232adafafaf22222231313",
   #"adf232322423423423232adbcdfdfd3333333434",
   #"adfdfaf332442423423423424234234342424323"
@@ -99,6 +120,55 @@ GUEST_TOKEN_MAX_AGE = 7200  # seconds
 GUEST_RATE_LIMIT_REFRESH_THRESHOLD = 1  # proactively rotate guest token at/below this many requests left
 
 URL = "https://api.twitter.com/graphql/gkjsKepM6gl_HmFWoWKfgg/SearchTimeline"
+
+# Fallback endpoint for shadowbanned/de-indexed accounts, which don't show
+# up in SearchTimeline results at all, but limited to ~3200 tweets
+# regardless of --max-tweets.
+ALT_MAX_TWEETS_HINT = 3200
+
+USER_LOOKUP_URL = "https://x.com/i/api/graphql/laYnJPCAcVo0o6pzcnlVxQ/UserByScreenName"
+USER_LOOKUP_FEATURES = {
+    "hidden_profile_subscriptions_enabled": True,
+    "rweb_tipjar_consumption_enabled": True,
+    "responsive_web_graphql_exclude_directive_enabled": True,
+    "verified_phone_label_enabled": False,
+    "subscriptions_verification_info_is_identity_verified_enabled": True,
+    "subscriptions_verification_info_verified_since_enabled": True,
+    "highlights_tweets_tab_ui_enabled": True,
+    "responsive_web_twitter_article_notes_tab_enabled": True,
+    "subscriptions_feature_can_gift_premium": False,
+    "creator_subscriptions_tweet_preview_api_enabled": True,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+}
+
+ALT_URL = "https://x.com/i/api/graphql/bt4TKuFz4T7Ckk-VvQVSow/UserTweetsAndReplies"
+ALT_FEATURES = {
+    "rweb_tipjar_consumption_enabled": True,
+    "responsive_web_graphql_exclude_directive_enabled": True,
+    "verified_phone_label_enabled": False,
+    "creator_subscriptions_tweet_preview_api_enabled": True,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+    "communities_web_enable_tweet_community_results_fetch": True,
+    "c9s_tweet_anatomy_moderator_badge_enabled": True,
+    "articles_preview_enabled": True,
+    "responsive_web_edit_tweet_api_enabled": True,
+    "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+    "view_counts_everywhere_api_enabled": True,
+    "longform_notetweets_consumption_enabled": True,
+    "responsive_web_twitter_article_tweet_consumption_enabled": True,
+    "tweet_awards_web_tipping_enabled": False,
+    "creator_subscriptions_quote_tweet_preview_enabled": False,
+    "freedom_of_speech_not_reach_fetch_enabled": False,
+    "standardized_nudges_misinfo": True,
+    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+    "rweb_video_timestamps_enabled": True,
+    "longform_notetweets_rich_text_read_enabled": True,
+    "longform_notetweets_inline_media_enabled": True,
+    "responsive_web_enhance_cards_enabled": False,
+}
+ALT_FIELD_TOGGLES = {"withArticlePlainText": True}
 
 FEATURES = {
     "android_graphql_skip_api_media_color_palette": False,
@@ -167,30 +237,39 @@ def format_duration(seconds):
 def strip_html(s):
     return re.sub(r"<[^>]+>", "", s or "").strip()
 
-def get_entries(data):
-    """Flatten entries across every instruction (tweets can arrive via
-    TimelineAddEntries, and cursors via either an entry in that list or a
-    standalone TimelineReplaceEntry instruction)."""
+def get_instructions(data):
     try:
-        instructions = data["data"]["search_by_raw_query"]["search_timeline"]["timeline"]["instructions"]
+        return data["data"]["search_by_raw_query"]["search_timeline"]["timeline"]["instructions"], "search"
     except (KeyError, TypeError):
-        return []
+        pass
+    try:
+        return data["data"]["user"]["result"]["timeline_v2"]["timeline"]["instructions"], "user_tweets"
+    except (KeyError, TypeError):
+        pass
+    return [], None
+
+def get_entries(data):
+    instructions, layout = get_instructions(data)
     entries = []
     for instr in instructions or []:
         entries.extend(instr.get("entries", []) or [])
         if "entry" in instr:
             entries.append(instr["entry"])
-    return entries
+    return entries, layout
 
-
-def tweet_entries(entries):
-    return [e for e in entries if e.get("entryId", "").startswith("tweet-")]
-
-def tweet_result_of(entry):
-    try:
-        return entry["content"]["itemContent"]["tweet_results"]["result"]
-    except (KeyError, TypeError):
-        return None
+def iter_tweet_results(entries, layout):
+    for e in entries:
+        entry_id = e.get("entryId", "")
+        content = e.get("content", {}) or {}
+        if entry_id.startswith("tweet-"):
+            tr = content.get("itemContent", {}).get("tweet_results")
+            if tr:
+                yield tr.get("result")
+        elif entry_id.startswith("profile-conversation-"):
+            for item in content.get("items", []) or []:
+                tr = item.get("item", {}).get("itemContent", {}).get("tweet_results")
+                if tr:
+                    yield tr.get("result")
 
 def get_cursor(entries, cursor_type="Bottom"):
     for e in entries:
@@ -220,9 +299,6 @@ def print_rate_limits(headers):
 
 
 def load_token_idx(tokens_count):
-    """Read the last-used auth token index from TOKEN_IDX_FILE so this run
-    picks up rotation where the previous invocation left off, rather than
-    always starting at AUTH_TOKENS[0]."""
     try:
         with open(TOKEN_IDX_FILE) as f:
             idx = int(f.read().strip())
@@ -282,6 +358,30 @@ def build_guest_headers(guest_token):
         "x-guest-token": guest_token,
     }
 
+def lookup_user_id(session, headers, screen_name):
+    variables = {
+        "screen_name": screen_name,
+        "includePromotedContent": False,
+        "withBirdwatchNotes": True,
+        "withVoice": True,
+    }
+    resp = session.get(
+        USER_LOOKUP_URL,
+        headers=headers,
+        params={
+            "variables": json.dumps(variables, separators=(",", ":")),
+            "features": json.dumps(USER_LOOKUP_FEATURES, separators=(",", ":")),
+        },
+    )
+    try:
+        data = resp.json()
+    except ValueError:
+        return None
+    try:
+        return data["data"]["user"]["result"]["rest_id"]
+    except (KeyError, TypeError):
+        return None
+
 def validate_date(value, flag):
     if not DATE_RE.match(value):
         print(
@@ -302,11 +402,17 @@ def build_query(user, until=None, since=None, max_id=None, since_id=None):
         query += f" max_id:{max_id}"
     return query
 
-def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=None, no_csv=False, guest=False):
+def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=None, no_csv=False, guest=False, alt=False, yes=False):
     if guest and not GUEST_BEARER_TOKEN:
         sys.exit("guest bearer_token not provided")
     if not guest and not AUTH_TOKENS:
-        sys.exit("AUTH_TOKENS is empty - populate the list before running (or pass --guest).")
+        sys.exit("AUTH_TOKENS / auth_tokens.txt is empty - populate the list before running (or pass --guest).")
+
+    using_alt = alt  # may flip True mid-run if SearchTimeline comes back empty on page 1
+    alt_user_id = None
+    if using_alt:
+        print(f"[*] --alt given - scraping @{user} via UserTweetsAndReplies from the start "
+              f"(max ~{ALT_MAX_TWEETS_HINT:,} tweets on this endpoint).")
 
     csrf_token = secrets.token_hex(16)
     query = build_query(user, until=until, since=since, max_id=max_id, since_id=since_id)
@@ -341,6 +447,7 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
             f"  since_id: {since_id or '(none)'}",
             f"  max_id: {max_id or '(none)'}",
             f"  no_csv: {no_csv}",
+            f"  endpoint: {'UserTweetsAndReplies (--alt)' if alt else ('UserTweetsAndReplies (fallback after empty SearchTimeline)' if using_alt else 'SearchTimeline')}",
         ]
         info_path = os.path.join(dest, "info.txt")
         with open(info_path, "w") as f:
@@ -376,30 +483,47 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
             headers = build_headers(csrf_token, auth_token)
             token_label = f"\x1b[1m{token_idx:02d}\x1b[0m …{auth_token[-4:]}"
 
-        variables = {
-            "rawQuery": query,
-            "count": 20,
-            "querySource": "typed_query",
-            "product": PRODUCT,
-        }
+        if using_alt:
+            if alt_user_id is None:
+                alt_user_id = lookup_user_id(session, headers, user)
+                if not alt_user_id:
+                    sys.exit(f"[!] Could not resolve a user id for @{user} via UserByScreenName - aborting.")
+                print(f"[*] Resolved @{user} -> user id {alt_user_id}")
+            variables = {
+                "userId": alt_user_id,
+                "count": 20,
+                "includePromotedContent": False,
+                "withCommunity": True,
+                "withVoice": True,
+                "withV2Timeline": True,
+            }
+            req_url, req_features, req_field_toggles = ALT_URL, ALT_FEATURES, ALT_FIELD_TOGGLES
+        else:
+            variables = {
+                "rawQuery": query,
+                "count": 20,
+                "querySource": "typed_query",
+                "product": PRODUCT,
+            }
+            req_url, req_features, req_field_toggles = URL, FEATURES, None
         if cursor:
             variables["cursor"] = cursor
 
         cursor_label = f"…{cursor[-24:]}" if cursor else "(start)"
         print(
             f"page \x1b[40m {count_next} \x1b[0m | elapsed: {int(time.time()-start)}s | "
-            f"token: {token_label} | "
+            f"token: {token_label} | endpoint: {'alt' if using_alt else 'search'} | "
             f"user: @{user} | cursor: {cursor_label} | tweets: {counter}"
         )
 
-        resp = session.get(
-            URL,
-            headers=headers,
-            params={
-                "variables": json.dumps(variables, separators=(",", ":")),
-                "features": json.dumps(FEATURES, separators=(",", ":")),
-            },
-        )
+        req_params = {
+            "variables": json.dumps(variables, separators=(",", ":")),
+            "features": json.dumps(req_features, separators=(",", ":")),
+        }
+        if req_field_toggles:
+            req_params["fieldToggles"] = json.dumps(req_field_toggles, separators=(",", ":"))
+
+        resp = session.get(req_url, headers=headers, params=req_params)
 
         out_path = os.path.join(dest, f"{count_next}.json")
         try:
@@ -453,11 +577,35 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
             continue
 
         consecutive_errors = 0
-        entries = get_entries(data)
-        tweets = tweet_entries(entries)
+        entries, layout = get_entries(data)
+        tweets = list(iter_tweet_results(entries, layout))
         next_cursor = get_cursor(entries, "Bottom")
 
         if len(tweets) == 0:
+            if count_next == 1 and not using_alt:
+                print(
+                    f"[!] SearchTimeline returned 0 tweets on the very first page for @{user}. "
+                    f"This usually means the account is shadowbanned/de-indexed from search "
+                    f"rather than actually empty."
+                )
+                fall_back = False
+                if yes:
+                    fall_back = True
+                    print(f"    --yes given - falling back to UserTweetsAndReplies (max ~{ALT_MAX_TWEETS_HINT:,} tweets).")
+                elif not sys.stdin.isatty():
+                    print("    Non-interactive session - skipping fallback. Re-run with --alt or --yes to use it directly.")
+                else:
+                    answer = input(
+                        f"    Try UserTweetsAndReplies instead (max ~{ALT_MAX_TWEETS_HINT:,} tweets)? [y/N] "
+                    ).strip().lower()
+                    fall_back = answer == "y"
+                if fall_back:
+                    using_alt = True
+                    cursor = None
+                    stuck_count = 0
+                    print(f"[*] Switching to UserTweetsAndReplies for @{user} ...")
+                    continue
+
             end = time.time()
             print(
                 f"[*] Search index returned 0 tweets on this page "
@@ -477,8 +625,8 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
             return dest
 
         # date range of first/last tweet in this page
-        first_created = tweet_result_of(tweets[0])
-        last_created = tweet_result_of(tweets[-1])
+        first_created = tweets[0]
+        last_created = tweets[-1]
         first_date = (first_created or {}).get("legacy", {}).get("created_at", "").replace(" +0000", "")
         last_date = (last_created or {}).get("legacy", {}).get("created_at", "").replace(" +0000", "")
         print(f"\x1b[1;96m{first_date} <----> {last_date}\x1b[0m", end=" | ")
@@ -490,8 +638,7 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
 
         page_ids = []
         for t in tweets:
-            r = tweet_result_of(t)
-            rid = (r or {}).get("rest_id")
+            rid = (t or {}).get("rest_id")
             if rid is not None:
                 try:
                     page_ids.append(int(rid))
@@ -549,8 +696,6 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
     return dest
 
 def get_media_url(media):
-    """Full-quality direct media URL for a media entity: highest-res jpg/png
-    for photos, highest-bitrate mp4 for videos/gifs."""
     mtype = media.get("type")
     if mtype == "photo":
         return media.get("media_url_https", "")
@@ -562,9 +707,6 @@ def get_media_url(media):
     return ""
 
 def expand_entities(text, legacy):
-    """Replace every t.co link in `text` with its full expansion: direct
-    jpg/png/mp4 for media, expanded_url for plain links. Returns the
-    rewritten text plus the mapping (used to catch links note-tweets omit)."""
     entities = legacy.get("entities", {}) or {}
     media_list = (legacy.get("extended_entities", {}) or {}).get("media") or entities.get("media") or []
     mapping = {}
@@ -613,11 +755,6 @@ def birdwatch_value(result):
     return ""
 
 def quote_unavailable_label(legacy, qresult):
-    """Build a label for a quoted tweet whose result is TweetUnavailable
-    (blocked, suspended, protected, deleted - the API doesn't always say
-    which). Prefers the API's own `reason` when present, otherwise falls
-    back to a generic label plus the permalink so the tweet is still
-    traceable."""
     permalink = (legacy.get("quoted_status_permalink", {}) or {}).get("expanded", "")
     reason = qresult.get("reason")
     if reason:
@@ -687,11 +824,8 @@ def build_text(result):
 
     return clean_whitespace(base)
 
-def extract_row(entry):
-    tr = entry.get("content", {}).get("itemContent", {}).get("tweet_results")
-    if not tr:
-        return None
-    result = unwrap_tweet_result(tr.get("result"))
+def extract_row(raw_result):
+    result = unwrap_tweet_result(raw_result)
     if not result:
         return None
 
@@ -726,8 +860,9 @@ def build_csv(dest, user):
                 data = json.load(f)
             except json.JSONDecodeError:
                 continue
-        for entry in tweet_entries(get_entries(data)):
-            row = extract_row(entry)
+        entries, layout = get_entries(data)
+        for raw_result in iter_tweet_results(entries, layout):
+            row = extract_row(raw_result)
             if row and row[0]:
                 rows[row[0]] = row  # dedup by tweet id, last write wins
 
@@ -846,6 +981,27 @@ def parse_args():
             "given explicitly."
         ),
     )
+    parser.add_argument(
+        "--alt",
+        dest="alt",
+        action="store_true",
+        help=(
+            "Skip SearchTimeline and scrape via UserTweetsAndReplies from the start instead. "
+            "Use this for accounts you already know are shadowbanned/de-indexed from search. "
+            f"This endpoint reads the timeline directly but is capped at the last "
+            f"~{ALT_MAX_TWEETS_HINT:,} tweets regardless of --max-tweets."
+        ),
+    )
+    parser.add_argument(
+        "--yes", "-y",
+        dest="yes",
+        action="store_true",
+        help=(
+            "Auto-confirm the UserTweetsAndReplies fallback prompt shown when SearchTimeline "
+            "returns 0 tweets on the first page, instead of asking interactively. Useful "
+            "combined with --update for unattended/cron runs."
+        ),
+    )
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -881,4 +1037,6 @@ if __name__ == "__main__":
         since_id=since_id,
         no_csv=args.no_csv,
         guest=args.guest,
+        alt=args.alt,
+        yes=args.yes,
     )

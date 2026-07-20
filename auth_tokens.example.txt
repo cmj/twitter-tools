@@ -1,0 +1,5 @@
+# copy this file to auth_tokens.txt and fill in one auth_token per line.
+# best results are with at least 20 tokens for large accounts. however, one
+# account would be sufficient for --alt (with_replies not search) option
+# which is limited to ~3200
+#adfadfdf3443242323232adafafaf22222231313

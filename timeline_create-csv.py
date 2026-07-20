@@ -7,6 +7,8 @@ timeline_scrape.py. Useful for regenerating/backfilling CSVs from old
 scrape directories without re-hitting the API - e.g. after a format
 change to the CSV columns, or if --no-csv was used originally.
 
+Understands SearchTimeline and UserTweetsAndReplies pages.
+
 Output columns:
 Id,Date,Text,Replies,ReTweets,Quotes,Likes,Views,Source,Birdwatch,ConversationId,Url
 
@@ -41,24 +43,41 @@ def format_count(n):
     except (TypeError, ValueError):
         return ""
 
-def get_entries(data):
+def get_instructions(data):
     try:
-        instructions = data["data"]["search_by_raw_query"]["search_timeline"]["timeline"]["instructions"]
+        return data["data"]["search_by_raw_query"]["search_timeline"]["timeline"]["instructions"], "search"
     except (KeyError, TypeError):
-        return []
+        pass
+    try:
+        return data["data"]["user"]["result"]["timeline_v2"]["timeline"]["instructions"], "user_tweets"
+    except (KeyError, TypeError):
+        pass
+    return [], None
+
+def get_entries(data):
+    instructions, layout = get_instructions(data)
     entries = []
     for instr in instructions or []:
         entries.extend(instr.get("entries", []) or [])
         if "entry" in instr:
             entries.append(instr["entry"])
-    return entries
+    return entries, layout
 
-def tweet_entries(entries):
-    return [e for e in entries if e.get("entryId", "").startswith("tweet-")]
+def iter_tweet_results(entries, layout):
+    for e in entries:
+        entry_id = e.get("entryId", "")
+        content = e.get("content", {}) or {}
+        if entry_id.startswith("tweet-"):
+            tr = content.get("itemContent", {}).get("tweet_results")
+            if tr:
+                yield tr.get("result")
+        elif entry_id.startswith("profile-conversation-"):
+            for item in content.get("items", []) or []:
+                tr = item.get("item", {}).get("itemContent", {}).get("tweet_results")
+                if tr:
+                    yield tr.get("result")
 
 def unwrap_tweet_result(result):
-    """Mirror jq: if(.result.tweet) then .result.tweet else .result end |
-    select(.__typename == "Tweet")"""
     if not result:
         return None
     if result.get("tweet"):
@@ -171,11 +190,8 @@ def build_text(result):
 
     return clean_whitespace(base)
 
-def extract_row(entry):
-    tr = entry.get("content", {}).get("itemContent", {}).get("tweet_results")
-    if not tr:
-        return None
-    result = unwrap_tweet_result(tr.get("result"))
+def extract_row(raw_result):
+    result = unwrap_tweet_result(raw_result)
     if not result:
         return None
 
@@ -210,8 +226,9 @@ def collect_rows(dest):
                 data = json.load(f)
             except json.JSONDecodeError:
                 continue
-        for entry in tweet_entries(get_entries(data)):
-            row = extract_row(entry)
+        entries, layout = get_entries(data)
+        for raw_result in iter_tweet_results(entries, layout):
+            row = extract_row(raw_result)
             if row and row[0]:
                 rows[row[0]] = row  # dedup by tweet id, last write wins
     return rows
