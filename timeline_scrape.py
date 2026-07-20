@@ -266,8 +266,9 @@ def iter_tweet_results(entries, layout):
             if tr:
                 yield tr.get("result")
         elif entry_id.startswith("profile-conversation-"):
-            for item in content.get("items", []) or []:
-                tr = item.get("item", {}).get("itemContent", {}).get("tweet_results")
+            items = content.get("items", []) or []
+            if items:
+                tr = items[-1].get("item", {}).get("itemContent", {}).get("tweet_results")
                 if tr:
                     yield tr.get("result")
 
