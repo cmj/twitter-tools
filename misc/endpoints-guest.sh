@@ -58,6 +58,7 @@ endpoints=(
   'nzme9KiYhfIOrrLrPP_XeQ/TweetResultByIdQuery'
   'gkjsKepM6gl_HmFWoWKfgg/SearchTimeline'
   'T99RzTzuQlfQSjHxH7FotA/SearchTimeline' # mobile
+  'Bcw3RzK-PatNAmbnw54hFw/SearchTimeline' # full
   'iTpgCtbdxrsJfyx0cFjHqg/ListByRestId'
   '-kmqNvm5Y-cVrfvBy6docg/ListBySlug'
   'P4NpVZDqUD_7MEM84L-8nw/ListMembers'
