@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Twitter guest endpoints test 
-
+# Select from list, or pass the queryId/endpoint to the script
+#
 # UserTweets - sorted by most liked on most acccounts: profile_best_highlights 
 #   examples: https://github.com/cmj/twitter-tools/wiki/RSS%E2%80%90Friendly 
 
@@ -129,6 +130,12 @@ request_endpoint() {
       echo -e "status: $status limit: \x1b[32m$remaining/$limit\x1b[0m reset: \x1b[94m$(date -d@$reset '+%a %T')\x1b[0m"
     done
 }
+
+if [[ -n "$1" ]]; then
+  endpoint="$1"
+  request_endpoint
+  exit
+fi
 
 PS3="Choose endpoint ('enter' for list, ^C to quit): "
 select endpoint in "${endpoints[@]}"; do
