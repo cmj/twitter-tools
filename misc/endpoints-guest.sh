@@ -17,8 +17,8 @@ tweetIds='["2057151976945713298","2057467593687011394"]'
 screen_name="jack"
 list_id=1860883 # @mashable - Social Media
 list_slug="social-media"
-#user_agent="TwitterAndroid/10.21.1"
-user_agent='User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0'
+user_agent="TwitterAndroid/10.21.1"
+#user_agent='User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:148.0) Gecko/20100101 Firefox/148.0'
 
 # Main web token
 #bearer_token='AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA'
@@ -29,8 +29,11 @@ bearer_token='AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF
 # Twitter for iPhone - all work
 #bearer_token="AAAAAAAAAAAAAAAAAAAAAAj4AQAAAAAAPraK64zCZ9CSzdLesbE7LB%2Bw4uE%3DVJQREvQNCZJNiz3rHO7lOXlkVOQkzzdsgu6wWgcazdMUaGoUGm"
 
-# Twitter for Mac - 3 only - UserWithProfileTweetsAndRepliesQueryV2 ListByRestId Retweeters
+# Twitter for Mac - DISABLED
 #bearer_token="AAAAAAAAAAAAAAAAAAAAAIWCCAAAAAAA2C25AxqI%2BYCS7pdfJKRH8Xh19zA%3D8vpDZzPHaEJhd20MKVWp3UR38YoPpuTX7UD2cVYo3YNikubuxd"
+
+# Twitter for iPad - UserByScreenName TweetResultByRestId UserTweets TVHomeMixer
+#bearer_token="AAAAAAAAAAAAAAAAAAAAAGHtAgAAAAAA%2Bx7ILXNILCqkSGIzy6faIHZ9s3Q%3DQy97w6SIrzE7lQwPJEYQBsArEE2fC25caFwRBvAGi456G09vGR"
 
 # Web 
 #bearer_token='AAAAAAAAAAAAAAAAAAAAACHguwAAAAAAaSlT0G31NDEyg%2BSnBN5JuyKjMCU%3Dlhg0gv0nE7KKyiJNEAojQbn8Y3wJm1xidDK7VnKGBP4ByJwHPb'
@@ -87,6 +90,10 @@ get_guest_token() {
     guest_token=$(<"$guest_token_file")
   else
     guest_token=$(curl -s -XPOST -H "Authorization: Bearer ${bearer_token}" "https://api.twitter.com/1.1/guest/activate.json" | jq -r '.guest_token')
+    if [[ -z "$guest_token" || "$guest_token" == "null" ]]; then
+      echo "Unable to acquire guest token" >&2
+      exit 1
+    fi
     echo -n "${guest_token}" > "$guest_token_file"
   fi
 }
