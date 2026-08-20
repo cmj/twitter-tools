@@ -72,6 +72,7 @@ endpoints=(
   'BbGLL1ZfMibdFNWlk7a0Pw/ListTimeline'
   'oRJs8SLCRNRbQzuZG93_oA/UserTweets'
   'kkaJ0Mf34PZVarrxzLihjg/UserTweetsAndReplies'
+  'AcYHjc_YAx-9_rKWdMsKvA/UserWithProfileTweetsAndRepliesQueryV2'
   'qIWNRQfRx-Rq2ybMont8rQ/HomeTimeline'
   'Y4Erk_-0hObvLpz0Iw3bzA/ConversationTimeline'
   'k3rtLsS9kG5hI-Jr0dTMCg/ConversationTimelineV2'
