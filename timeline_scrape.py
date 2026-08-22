@@ -749,6 +749,15 @@ def unwrap_tweet_result(result):
         return None
     return result
 
+def screen_name_of(user_result):
+    if not user_result:
+        return ""
+    return (
+        user_result.get("core", {}).get("screen_name")
+        or user_result.get("legacy", {}).get("screen_name")
+        or ""
+    )
+
 def birdwatch_value(result):
     pivot = result.get("birdwatch_pivot")
     if pivot and pivot.get("destinationUrl"):
@@ -806,12 +815,8 @@ def build_text(result):
         qresult = quoted.get("result", {}) or {}
         if qresult.get("__typename") == "TweetWithVisibilityResults":
             qresult = qresult.get("tweet", qresult)
-        q_screen_name = (
-            qresult.get("core", {})
-            .get("user_results", {})
-            .get("result", {})
-            .get("legacy", {})
-            .get("screen_name")
+        q_screen_name = screen_name_of(
+            qresult.get("core", {}).get("user_results", {}).get("result", {})
         )
         if q_screen_name:
             q_legacy = qresult.get("legacy", {}) or {}
@@ -842,12 +847,8 @@ def extract_row(raw_result):
     source = strip_html(result.get("source", ""))
     birdwatch = birdwatch_value(result)
     conversation_id = legacy.get("conversation_id_str", "")
-    screen_name = (
-        result.get("core", {})
-        .get("user_results", {})
-        .get("result", {})
-        .get("legacy", {})
-        .get("screen_name", "")
+    screen_name = screen_name_of(
+        result.get("core", {}).get("user_results", {}).get("result", {})
     )
     url = f"https://x.com/{screen_name}/status/{tweet_id}" if tweet_id else ""
 

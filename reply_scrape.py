@@ -142,7 +142,13 @@ def build_replies_csv(dest, page_records):
         for raw_result in iter_reply_results(entries, focal_id):
             row = ts.extract_row(raw_result)
             if row and row[0]:
-                rows[row[0]] = row
+                result = ts.unwrap_tweet_result(raw_result)
+                screen_name = ts.screen_name_of(
+                    (result or {}).get("core", {}).get("user_results", {}).get("result", {})
+                )
+                if screen_name:
+                    row[2] = f"@{screen_name} - {row[2]}"
+                rows[row[0]] = row  # dedup by tweet id, last write wins
 
     if not rows:
         print(f"No replies found - skipping CSV write.")
@@ -163,16 +169,20 @@ def build_replies_csv(dest, page_records):
 
 def _paginate_one_mode(focal_id, ranking, dest, session, token_idx, tokens_max,
                         csrf_token, seen_ids, local_ids, max_tweets, page_counter,
-                        page_records, start):
+                        page_records, start, guest=False, guest_state=None):
     consecutive_errors = 0
     stuck_count = 0
     cursor = None
 
     while True:
         page_counter[0] += 1
-        auth_token = ts.AUTH_TOKENS[token_idx]
-        headers = ts.build_headers(csrf_token, auth_token)
-        token_label = f"\x1b[1m{token_idx:02d}\x1b[0m …{auth_token[-4:]}"
+        if guest:
+            headers = ts.build_guest_headers(guest_state["token"])
+            token_label = f"guest …{guest_state['token'][-4:]}"
+        else:
+            auth_token = ts.AUTH_TOKENS[token_idx]
+            headers = ts.build_headers(csrf_token, auth_token)
+            token_label = f"\x1b[1m{token_idx:02d}\x1b[0m …{auth_token[-4:]}"
 
         variables = {
             "focalTweetId": focal_id,
@@ -214,10 +224,15 @@ def _paginate_one_mode(focal_id, ranking, dest, session, token_idx, tokens_max,
                 print(f"[!] {consecutive_errors} consecutive errors - giving up on {ranking} mode for {focal_id}.")
                 return token_idx, False
             backoff = min(ts.BACKOFF_BASE * (2 ** (consecutive_errors - 1)), ts.BACKOFF_MAX)
-            print(f"   -> retrying with the next token in {backoff}s "
-                  f"({consecutive_errors}/{ts.MAX_CONSECUTIVE_ERRORS} consecutive errors)")
-            token_idx = token_idx + 1 if token_idx < tokens_max else 0
-            ts.save_token_idx(token_idx)
+            if guest:
+                print(f"   -> refreshing guest token, retrying in {backoff}s "
+                      f"({consecutive_errors}/{ts.MAX_CONSECUTIVE_ERRORS} consecutive errors)")
+                guest_state["token"] = ts.get_guest_token(session, force_refresh=True)
+            else:
+                print(f"   -> retrying with the next token in {backoff}s "
+                      f"({consecutive_errors}/{ts.MAX_CONSECUTIVE_ERRORS} consecutive errors)")
+                token_idx = token_idx + 1 if token_idx < tokens_max else 0
+                ts.save_token_idx(token_idx)
             time.sleep(backoff)
             continue
 
@@ -243,15 +258,23 @@ def _paginate_one_mode(focal_id, ranking, dest, session, token_idx, tokens_max,
                 return token_idx, False
 
             backoff = min(ts.BACKOFF_BASE * (2 ** (consecutive_errors - 1)), ts.BACKOFF_MAX)
-            print(f"   -> retrying with the next token in {backoff}s "
-                  f"({consecutive_errors}/{ts.MAX_CONSECUTIVE_ERRORS} consecutive errors)")
-            token_idx = token_idx + 1 if token_idx < tokens_max else 0
-            ts.save_token_idx(token_idx)
+            if guest:
+                print(f"   -> refreshing guest token, retrying in {backoff}s "
+                      f"({consecutive_errors}/{ts.MAX_CONSECUTIVE_ERRORS} consecutive errors)")
+                guest_state["token"] = ts.get_guest_token(session, force_refresh=True)
+            else:
+                print(f"   -> retrying with the next token in {backoff}s "
+                      f"({consecutive_errors}/{ts.MAX_CONSECUTIVE_ERRORS} consecutive errors)")
+                token_idx = token_idx + 1 if token_idx < tokens_max else 0
+                ts.save_token_idx(token_idx)
             time.sleep(backoff)
             continue
 
         consecutive_errors = 0
-        ts.print_rate_limits(resp.headers)
+        remaining = ts.print_rate_limits(resp.headers)
+        if guest and remaining is not None and remaining <= ts.GUEST_RATE_LIMIT_REFRESH_THRESHOLD:
+            print(f"[*] Guest token has {remaining} request(s) left - rotating to a fresh one")
+            guest_state["token"] = ts.get_guest_token(session, force_refresh=True)
 
         entries = get_entries(data)
         replies = list(iter_reply_results(entries, focal_id))
@@ -278,14 +301,16 @@ def _paginate_one_mode(focal_id, ranking, dest, session, token_idx, tokens_max,
 
         if is_first_page and not page_ids:
             print(f"[*] No replies at all for {focal_id} under {ranking} - skipping.")
-            token_idx = token_idx + 1 if token_idx < tokens_max else 0
-            ts.save_token_idx(token_idx)
+            if not guest:
+                token_idx = token_idx + 1 if token_idx < tokens_max else 0
+                ts.save_token_idx(token_idx)
             return token_idx, False
 
         if not next_cursor:
             print(f"[*] No further cursor in {ranking} mode - exhausted.")
-            token_idx = token_idx + 1 if token_idx < tokens_max else 0
-            ts.save_token_idx(token_idx)
+            if not guest:
+                token_idx = token_idx + 1 if token_idx < tokens_max else 0
+                ts.save_token_idx(token_idx)
             return token_idx, False
 
         made_progress = bool(new_ids) and next_cursor != cursor
@@ -297,19 +322,23 @@ def _paginate_one_mode(focal_id, ranking, dest, session, token_idx, tokens_max,
                   f"({stuck_count}/{STUCK_GIVEUP} stuck pages)")
             if stuck_count >= STUCK_GIVEUP:
                 print(f"\u2717 {ranking} mode stalled for {focal_id} - moving on.")
-                token_idx = token_idx + 1 if token_idx < tokens_max else 0
-                ts.save_token_idx(token_idx)
+                if not guest:
+                    token_idx = token_idx + 1 if token_idx < tokens_max else 0
+                    ts.save_token_idx(token_idx)
                 return token_idx, False
 
         cursor = next_cursor
-        token_idx = token_idx + 1 if token_idx < tokens_max else 0
-        ts.save_token_idx(token_idx)
+        if not guest:
+            token_idx = token_idx + 1 if token_idx < tokens_max else 0
+            ts.save_token_idx(token_idx)
         time.sleep(INTERVAL)
 
 
-def scrape_replies(root_id, max_tweets=None, rankings=None, no_csv=False, max_depth=6):
-    if not ts.AUTH_TOKENS:
-        sys.exit("AUTH_TOKENS / auth_tokens.txt is empty - populate the list before running.")
+def scrape_replies(root_id, max_tweets=None, rankings=None, no_csv=False, max_depth=6, guest=False):
+    if guest and not ts.GUEST_BEARER_TOKEN:
+        sys.exit("guest bearer_token not provided - fill in GUEST_BEARER_TOKEN in timeline_scrape.py.")
+    if not guest and not ts.AUTH_TOKENS:
+        sys.exit("AUTH_TOKENS / auth_tokens.txt is empty - populate the list before running (or pass --guest).")
 
     rankings = rankings or ["Likes", "Relevance", "Recency"]
 
@@ -319,8 +348,14 @@ def scrape_replies(root_id, max_tweets=None, rankings=None, no_csv=False, max_de
     os.makedirs(dest, exist_ok=True)
 
     session = ts.requests.Session()
-    tokens_max = len(ts.AUTH_TOKENS) - 1
-    token_idx = ts.load_token_idx(len(ts.AUTH_TOKENS))
+    guest_state = None
+    if guest:
+        tokens_max = 0
+        token_idx = 0
+        guest_state = {"token": ts.get_guest_token(session)}
+    else:
+        tokens_max = len(ts.AUTH_TOKENS) - 1
+        token_idx = ts.load_token_idx(len(ts.AUTH_TOKENS))
 
     seen_ids = set()          # every reply id found anywhere in the tree
     page_records = []         # (file_path, focal_id) for every page saved
@@ -341,7 +376,7 @@ def scrape_replies(root_id, max_tweets=None, rankings=None, no_csv=False, max_de
             token_idx, hit_max = _paginate_one_mode(
                 focal_id, ranking, dest, session, token_idx, tokens_max,
                 csrf_token, seen_ids, local_ids, max_tweets, page_counter,
-                page_records, start,
+                page_records, start, guest=guest, guest_state=guest_state,
             )
             if hit_max:
                 break
@@ -367,7 +402,8 @@ def scrape_replies(root_id, max_tweets=None, rankings=None, no_csv=False, max_de
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Scrape all replies to one or more tweets via TweetDetail"
+        description="Scrape all replies to one or more tweets via X's TweetDetail GraphQL endpoint, "
+        "paginating with the response cursor."
     )
     parser.add_argument("tweet_ids", nargs="+", help="one or more tweet ids to fetch replies for")
     parser.add_argument(
@@ -401,6 +437,12 @@ def parse_args():
         action="store_true",
         help="Disable CSV writes entirely - only the raw per-page JSON files are saved.",
     )
+    parser.add_argument(
+        "--guest",
+        dest="guest",
+        action="store_true",
+        help="Use a single rotating guest token (GUEST_BEARER_TOKEN in timeline_scrape.py) instead of AUTH_TOKENS.",
+    )
     return parser.parse_args()
 
 
@@ -409,4 +451,4 @@ if __name__ == "__main__":
     rankings = [args.ranking] if args.ranking else None
     for tid in args.tweet_ids:
         scrape_replies(tid, max_tweets=args.max_tweets, rankings=rankings,
-                        no_csv=args.no_csv, max_depth=args.max_depth)
+                        no_csv=args.no_csv, max_depth=args.max_depth, guest=args.guest)
