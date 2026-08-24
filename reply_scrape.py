@@ -418,9 +418,9 @@ def parse_args():
         "--max-depth",
         dest="max_depth",
         type=int,
-        default=6,
-        help="How many levels of replies-to-replies to crawl beneath the root tweet (default: 6). "
-        "0 fetches only direct replies to the root, matching the old single-level behavior.",
+        default=0,
+        help="How many levels of replies-to-replies to crawl beneath the root tweet (default: 0). "
+        "0 fetches only direct replies to the root only). Bump this above 0 to also crawl replies-to-replies.",
     )
     parser.add_argument(
         "--ranking",
