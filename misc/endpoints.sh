@@ -82,6 +82,8 @@ endpoints=(
   '3G9Ms1POEEiF86dFhV-tTg/BirdwatchFetchNotes'
   '_-RuCOiTBRLm2IarGaeB3w/SimilarPosts'
   'qZ92r6KDO0_GZxVJGM33XA/AboutAccountQuery'
+  'BxHYzbzEjNHfRXnHvCU-RA/GetXChatNumberQuery'
+  'jI8tWg6m5Yj4nCwc4jXbUQ/UserUnderTheHoodReport'
   '/1.1/account/verify_credentials.json'
   '/1.1/users/lookup.json'
   '/1.1/account/settings.json'
