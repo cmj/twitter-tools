@@ -494,6 +494,8 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
                 "userId": alt_user_id,
                 "count": 20,
                 "includePromotedContent": False,
+                "includeHasBirdwatchNotes": True,
+                "withBirdwatchNotes": True,
                 "withCommunity": True,
                 "withVoice": True,
                 "withV2Timeline": True,
@@ -504,6 +506,8 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
                 "rawQuery": query,
                 "count": 20,
                 "querySource": "typed_query",
+                "includeHasBirdwatchNotes": True,
+                "withBirdwatchNotes": True,
                 "product": PRODUCT,
             }
             req_url, req_features, req_field_toggles = URL, FEATURES, None
