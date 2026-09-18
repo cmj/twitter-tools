@@ -18,6 +18,13 @@ The search query can optionally be bounded once at the start with:
   --since-id <id>   adds since_id:<id> to the query - only tweets newer
                      than this tweet id.
 
+--retweets switches to the UserRepostsTimeline endpoint, which returns only
+the user's reposts (not their own tweets/replies). SearchTimeline's index
+only covers the last 7 days, so for pulling a user's full retweet history
+this is the endpoint to use. It takes no search query, so --until/--since/
+--max-id don't apply; --since-id/--update still work but are enforced
+client-side instead of via the query. Mutually exclusive with --alt.
+
 --update is a shortcut useful for cronjobs: it looks up the most recently saved
 CSV for the given user, reads the last (highest) tweet id from it, and
 runs with --since-id set to that id - so only new tweets are fetched. If
@@ -30,7 +37,7 @@ inline "[@user] quoted text url", "[quote unavailable: url]" (blocked/
 suspended/protected quote), or "[deleted tweet]" suffix
 
 Usage:
-    ./timeline_scrape.py <username> [--max-tweets N] [--until DATE] [--since DATE] [--max-id ID] [--since-id ID] [--update] [--no-csv] [--alt] [--yes]
+    ./timeline_scrape.py <username> [--max-tweets N] [--until DATE] [--since DATE] [--max-id ID] [--since-id ID] [--update] [--no-csv] [--alt | --retweets] [--yes]
 
     --max-tweets is optional but highly recommended - without it the script
     keeps paging forever until it either runs out of tweets or every token
@@ -170,6 +177,52 @@ ALT_FEATURES = {
 }
 ALT_FIELD_TOGGLES = {"withArticlePlainText": True}
 
+# retweets-only
+REPOSTS_URL = "https://x.com/i/api/graphql/CnNg1YiKG7bRgi-RoIfKsw/UserRepostsTimeline"
+REPOSTS_FEATURES = {
+    "rweb_video_screen_enabled": False,
+    "rweb_cashtags_enabled": True,
+    "profile_label_improvements_pcf_label_in_post_enabled": True,
+    "responsive_web_profile_redirect_enabled": True,
+    "rweb_tipjar_consumption_enabled": False,
+    "verified_phone_label_enabled": False,
+    "creator_subscriptions_tweet_preview_api_enabled": True,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+    "premium_content_api_read_enabled": False,
+    "communities_web_enable_tweet_community_results_fetch": True,
+    "c9s_tweet_anatomy_moderator_badge_enabled": True,
+    "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
+    "responsive_web_grok_analyze_post_followups_enabled": True,
+    "rweb_cashtags_composer_attachment_enabled": True,
+    "responsive_web_jetfuel_frame": True,
+    "rweb_sports_post_context_enabled": True,
+    "responsive_web_grok_share_attachment_enabled": True,
+    "responsive_web_grok_annotations_enabled": True,
+    "articles_preview_enabled": True,
+    "responsive_web_edit_tweet_api_enabled": True,
+    "rweb_conversational_replies_downvote_enabled": False,
+    "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+    "view_counts_everywhere_api_enabled": True,
+    "longform_notetweets_consumption_enabled": True,
+    "responsive_web_twitter_article_tweet_consumption_enabled": True,
+    "content_disclosure_indicator_enabled": True,
+    "content_disclosure_ai_generated_indicator_enabled": True,
+    "responsive_web_grok_show_grok_translated_post": True,
+    "responsive_web_grok_analysis_button_from_backend": True,
+    "post_ctas_fetch_enabled": False,
+    "freedom_of_speech_not_reach_fetch_enabled": True,
+    "standardized_nudges_misinfo": True,
+    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+    "longform_notetweets_rich_text_read_enabled": True,
+    "longform_notetweets_inline_media_enabled": False,
+    "responsive_web_nested_quote_preview_enabled": False,
+    "responsive_web_grok_image_annotation_enabled": True,
+    "responsive_web_grok_imagine_annotation_enabled": True,
+    "responsive_web_grok_community_note_auto_translation_is_enabled": True,
+    "responsive_web_enhance_cards_enabled": False,
+}
+REPOSTS_FIELD_TOGGLES = {"withPayments": False, "withArticlePlainText": False}
+
 FEATURES = {
     "android_graphql_skip_api_media_color_palette": False,
     "blue_business_profile_image_shape_enabled": False,
@@ -179,6 +232,7 @@ FEATURES = {
     "graphql_is_translatable_rweb_tweet_is_translatable_enabled": False,
     "hidden_profile_likes_enabled": False,
     "highlights_tweets_tab_ui_enabled": False,
+    "includeHasBirdwatchNotes": True,
     "interactive_text_enabled": False,
     "longform_notetweets_consumption_enabled": True,
     "longform_notetweets_inline_media_enabled": False,
@@ -221,6 +275,7 @@ FEATURES = {
     "premium_content_api_read_enabled": False,
     "articles_preview_enabled": True,
     "responsive_web_grok_analyze_post_followups_enabled": False,
+    "withBirdwatchNotes": True,
 }
 
 TWITTER_EPOCH_MS = 1288834974657  # snowflake epoch offset, in ms
@@ -244,6 +299,10 @@ def get_instructions(data):
         pass
     try:
         return data["data"]["user"]["result"]["timeline_v2"]["timeline"]["instructions"], "user_tweets"
+    except (KeyError, TypeError):
+        pass
+    try:
+        return data["data"]["user"]["result"]["timeline"]["timeline"]["instructions"], "reposts"
     except (KeyError, TypeError):
         pass
     return [], None
@@ -403,11 +462,13 @@ def build_query(user, until=None, since=None, max_id=None, since_id=None):
         query += f" max_id:{max_id}"
     return query
 
-def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=None, no_csv=False, guest=False, alt=False, yes=False):
+def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=None, no_csv=False, guest=False, alt=False, retweets=False, yes=False):
     if guest and not GUEST_BEARER_TOKEN:
         sys.exit("guest bearer_token not provided")
     if not guest and not AUTH_TOKENS:
         sys.exit("AUTH_TOKENS / auth_tokens.txt is empty - populate the list before running (or pass --guest).")
+    if alt and retweets:
+        sys.exit("[!] --alt and --retweets both select a different endpoint from the start - pass only one.")
 
     using_alt = alt  # may flip True mid-run if SearchTimeline comes back empty on page 1
     alt_user_id = None
@@ -415,8 +476,19 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
         print(f"[*] --alt given - scraping @{user} via UserTweetsAndReplies from the start "
               f"(max ~{ALT_MAX_TWEETS_HINT:,} tweets on this endpoint).")
 
+    using_reposts = retweets
+    reposts_user_id = None
+    if using_reposts:
+        print(f"[*] --retweets given - scraping @{user}'s reposts only via UserRepostsTimeline "
+              f"(not limited to the last 7 days like search).")
+        if until or since or max_id:
+            print("[!] --until/--since/--max-id aren't supported by UserRepostsTimeline - ignoring them.")
+
     csrf_token = secrets.token_hex(16)
-    query = build_query(user, until=until, since=since, max_id=max_id, since_id=since_id)
+    if using_reposts:
+        query = f"(UserRepostsTimeline for @{user} - no search query; endpoint has no date/id filtering)"
+    else:
+        query = build_query(user, until=until, since=since, max_id=max_id, since_id=since_id)
 
     now = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     dest = f"{user}-{now}"
@@ -448,7 +520,7 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
             f"  since_id: {since_id or '(none)'}",
             f"  max_id: {max_id or '(none)'}",
             f"  no_csv: {no_csv}",
-            f"  endpoint: {'UserTweetsAndReplies (--alt)' if alt else ('UserTweetsAndReplies (fallback after empty SearchTimeline)' if using_alt else 'SearchTimeline')}",
+            f"  endpoint: {'UserRepostsTimeline (--retweets)' if using_reposts else ('UserTweetsAndReplies (--alt)' if alt else ('UserTweetsAndReplies (fallback after empty SearchTimeline)' if using_alt else 'SearchTimeline'))}",
         ]
         info_path = os.path.join(dest, "info.txt")
         with open(info_path, "w") as f:
@@ -501,6 +573,19 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
                 "withV2Timeline": True,
             }
             req_url, req_features, req_field_toggles = ALT_URL, ALT_FEATURES, ALT_FIELD_TOGGLES
+        elif using_reposts:
+            if reposts_user_id is None:
+                reposts_user_id = lookup_user_id(session, headers, user)
+                if not reposts_user_id:
+                    sys.exit(f"[!] Could not resolve a user id for @{user} via UserByScreenName - aborting.")
+                print(f"[*] Resolved @{user} -> user id {reposts_user_id}")
+            variables = {
+                "userId": reposts_user_id,
+                "count": 20,
+                "includePromotedContent": True,
+                "withVoice": True,
+            }
+            req_url, req_features, req_field_toggles = REPOSTS_URL, REPOSTS_FEATURES, REPOSTS_FIELD_TOGGLES
         else:
             variables = {
                 "rawQuery": query,
@@ -517,7 +602,7 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
         cursor_label = f"…{cursor[-24:]}" if cursor else "(start)"
         print(
             f"page \x1b[40m {count_next} \x1b[0m | elapsed: {int(time.time()-start)}s | "
-            f"token: {token_label} | endpoint: {'alt' if using_alt else 'search'} | "
+            f"token: {token_label} | endpoint: {'alt' if using_alt else ('reposts' if using_reposts else 'search')} | "
             f"user: @{user} | cursor: {cursor_label} | tweets: {counter}"
         )
 
@@ -587,7 +672,7 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
         next_cursor = get_cursor(entries, "Bottom")
 
         if len(tweets) == 0:
-            if count_next == 1 and not using_alt:
+            if count_next == 1 and not using_alt and not using_reposts:
                 print(
                     f"[!] SearchTimeline returned 0 tweets on the very first page for @{user}. "
                     f"This usually means the account is shadowbanned/de-indexed from search "
@@ -650,9 +735,35 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
                 except ValueError:
                     pass
 
+        hit_since_id = False
+        if using_reposts and since_id:
+            try:
+                since_id_int = int(since_id)
+            except ValueError:
+                since_id_int = None
+            if since_id_int is not None:
+                kept = [pid for pid in page_ids if pid > since_id_int]
+                if len(kept) < len(page_ids):
+                    hit_since_id = True
+                page_ids = kept
+
         new_ids = [pid for pid in page_ids if pid not in seen_ids]
         seen_ids.update(page_ids)
         counter = len(seen_ids)
+
+        if hit_since_id:
+            end = time.time()
+            print(f"[*] Reached tweets at/before since_id:{since_id} - stopping here "
+                  f"(UserRepostsTimeline has no server-side id filter, so this is enforced client-side).")
+            print(f"[*] All done - completed in {int(end-start)} seconds")
+            if not guest:
+                token_idx = token_idx + 1 if token_idx < tokens_max else 0
+                save_token_idx(token_idx)
+            csv_path = maybe_build_csv()
+            write_info("completed - reached since_id boundary", pages_fetched, csv_path)
+            age = format_duration(time.time() - snowflake_epoch_seconds(since_id))
+            print(f"Downloaded {counter:,} tweets from @{user} after {since_id} ({age}) to {dest}/")
+            return dest
 
         if max_tweets is not None and counter >= max_tweets:
             end = time.time()
@@ -999,6 +1110,20 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--retweets",
+        dest="retweets",
+        action="store_true",
+        help=(
+            "Scrape via the UserRepostsTimeline endpoint instead - returns only this user's "
+            "reposts (retweets), not their own tweets or replies. Unlike SearchTimeline this "
+            "isn't limited to the last 7 days, so it's the best way to pull a user's full "
+            "retweet history. Takes no search query, so --until/--since/--max-id are ignored; "
+            "--since-id and --update still work, enforced client-side (pages come back "
+            "newest-first, so the run stops once it reaches an id at or before that point). "
+            "Mutually exclusive with --alt."
+        ),
+    )
+    parser.add_argument(
         "--yes", "-y",
         dest="yes",
         action="store_true",
@@ -1012,6 +1137,9 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
+
+    if args.alt and args.retweets:
+        sys.exit("[!] --alt and --retweets both select a different endpoint from the start - pass only one.")
 
     since_id = args.since_id
     if args.update:
@@ -1044,5 +1172,6 @@ if __name__ == "__main__":
         no_csv=args.no_csv,
         guest=args.guest,
         alt=args.alt,
+        retweets=args.retweets,
         yes=args.yes,
     )
