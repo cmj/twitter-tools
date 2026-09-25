@@ -1,15 +1,20 @@
 #!/bin/bash
+# grab followers of an account. rate-limited to 180 requests (36,000 results)
 # v1.1 now requires curl major_version >=8 or curl-impersonate
 
-x_csrf_token=''
-auth_token=''
+#auth_token=''
+#x_csrf_token=''
+
+# source ~/.env-twitter for $auth_token and $x_csrf_token (ct0)
+. ~/.env-twitter
 
 usage() { echo "$0 twitter_username"; exit 1; }
 [ "$#" -ne 1 ] && usage
 user="$1"
 
 bearer_token='AAAAAAAAAAAAAAAAAAAAAFXzAwAAAAAAMHCxpeSDG1gLNLghVe8d74hl6k4%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F'
-header=(-H "Authorization: Bearer ${bearer_token}" -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" -H "X-Csrf-Token: ${x_csrf_token}" -H "Cookie: ct0=${x_csrf_token}; auth_token=${auth_token}")
+user_agent="TwitterAndroid/10.21.1"
+header=(-H "Authorization: Bearer ${bearer_token}" -H "User-Agent: ${user_agent}" -H "X-Csrf-Token: ${x_csrf_token}" -H "Cookie: ct0=${x_csrf_token}; auth_token=${auth_token}")
 
 lookup=$(curl -s "https://api.twitter.com/1.1/users/lookup.json?screen_name=${user//@/}" "${header[@]}")
 user_id=$(jq '.[].id' <<< "${lookup}")
