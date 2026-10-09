@@ -3,7 +3,7 @@
 # guest mode is slow, won't return birdwatch info and stats are lagged.
 
 # source session envars (x_csrf_token auth_token); much faster response vs parsing SSR
-. ~/.env-twitter 2>/dev/null
+[ -f ~/.env-twitter ] && source ~/.env-twitter
 #x_csrf_token=$(openssl rand -hex 16)
 #auth_token=""
 
@@ -219,5 +219,4 @@ JQ
 
 printf '%s' "$json" | jq -r --arg mode "$mode" "$jq_prog" |
   sed -e ':a;N;$!ba;s/\n/ /g' -e 's/  / /g;s/\&amp;/\&/g' |
-  sed 's/\\n\\n/ /g;s/\\n/ /g;s/^\"//;s/\"$//;s/\\"/"/g;s/  / /g' |
-  sed 's/[rR]etard/\[slur\]/g' 2>/dev/null
+  sed 's/\\n\\n/ /g;s/\\n/ /g;s/^\"//;s/\"$//;s/\\"/"/g;s/  / /g' 
