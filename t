@@ -101,7 +101,7 @@ if [ "$guest" -eq 1 ]; then
       *)                page="https://x.com/i/status/${id}" ;;
     esac
     needle=tweet_result_by_rest_id
-    select_jq='.result.value'
+    select_jq='.result.value | if type == "string" then fromjson else . end'
   fi
   json=$(curl -s -L -A "$ua" -H "Accept: text/html" "$page" \
     | NEEDLE="$needle" perl -0777 -e "$guest_extract_pl" \
