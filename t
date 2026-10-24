@@ -191,7 +191,7 @@ def norm_guest:
       limited: .legacy.limited_actions,
       replies: .counts.reply_count, rts: .counts.retweet_count, favs: .counts.favorite_count,
       views: .views.count, src: (.source | str),
-      loc: ([$u.core.location, $u.legacy.location, $u.location] | map(select(type == "string")) | first // ""),
+      loc: ([$u.location.location, $u.core.location, $u.legacy.location, $u.location] | map(select(type == "string")) | first // ""),
       bw: (.has_birdwatch_notes == true), id: .rest_id }
     end;
 
