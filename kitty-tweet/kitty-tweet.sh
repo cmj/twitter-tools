@@ -1,5 +1,5 @@
 #!/bin/bash
-# usage: kitty-tweet.sh [-a|-g] [-b|-B] [-S] [-d domain] [id | url | @user [n]]   (default 20)
+# usage: kitty-tweet.sh [-a|-g] [-R] [-b|-B] [-S] [-d domain] [id | url | @user [n]]   (default 20)
 # config: ${XDG_CONFIG_HOME:-~/.config}/kitty-tweet/kitty-tweet.conf  (KEY=value; env overrides it, flags override both)
 
 conf=${TWEET_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/kitty-tweet/kitty-tweet.conf}
@@ -18,8 +18,9 @@ SHOW_PARENT=${SHOW_PARENT:-1} SHOW_SOURCE=${SHOW_SOURCE:-1} STRIP_TRACKING=${STR
 DOMAIN=${DOMAIN:-} BOXES=${BOXES:-0} MODE=${MODE:-guest}
 
 usage() {
-  echo "usage: ${0##*/} [-a|-g] [-b|-B] [-S] [-d domain] [id | url | @user [n]]"
-  echo "  -a auth api   -g guest/ssr   (default: MODE=$MODE)"
+  echo "usage: ${0##*/} [-a|-g] [-R] [-b|-B] [-S] [-d domain] [id | url | @user [n]]"
+  echo "  -a session cookies (@user = tweets+replies)   -g guest token (@user = originals)   (default: MODE=$MODE)"
+  echo "  -R guest @user: replies timeline"
   echo "  -b frame with boxes -d ansi-rounded   -B no frame   (default: BOXES=$BOXES)"
   echo "  -S skip the source label request (-a only)"
   echo "  -d domain for x.com links, e.g. nitter.net   (default: DOMAIN=${DOMAIN:-x.com})"
@@ -34,6 +35,7 @@ while [ $# -gt 0 ]; do
   case $1 in
     -a|-auth|--auth)   topts+=(-a) ;;
     -g|-guest|--guest) topts+=(-g) ;;
+    -R|-replies|--replies) topts+=(-R) ;;
     -b|-box|-boxes|--box|--boxes) boxes=1 ;;
     -B|-nobox|--no-boxes) boxes=0 ;;
     -S|-nosource|--no-source) SHOW_SOURCE=0 ;;
@@ -49,12 +51,13 @@ strip=1; [ "$STRIP_TRACKING" = 0 ] && strip=0
 auth=0; for o in "${topts[@]}"; do [ "$o" = -a ] && auth=1; [ "$o" = -g ] && auth=0; done
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) tcmd=t miss=0
-command -v t >/dev/null || { [ -x "$here/t" ] && tcmd=$here/t; }
+if [ -x "$here/t" ]; then tcmd=$here/t; else command -v t >/dev/null || tcmd=t; fi
 need() { command -v "$1" >/dev/null || { echo "${0##*/}: $1 not found. $2" >&2; miss=1; }; }
 need kitty "https://sw.kovidgoyal.net/kitty/binary/ (brew install --cask kitty), run this inside kitty"
 need jq "apt install jq | brew install jq"
 [ "$tcmd" = t ] && need t "get the t script from https://github.com/cmj/twitter-tools (download t, chmod +x t, put it in PATH or next to this script)"
 if ((boxes)); then
+  need perl "apt install perl | brew install perl"
   need boxes "apt install boxes | brew install boxes | https://boxes.thomasjensen.com (or drop -b)"
   command -v boxes >/dev/null && ! echo x | boxes -d ansi-rounded >/dev/null 2>&1 &&
     { echo "${0##*/}: boxes has no ansi-rounded design, upgrade it (or drop -b)" >&2; miss=1; }
@@ -188,8 +191,9 @@ def base($qid):
 
 (.data.tweetResult.result // .data.tweet_result_by_rest_id.result // .) as $r
 | ($r | if type == "object" and has("tweet") then .tweet else . end) as $t
-| ([$t | with_entries(select(.key | test("^quoted"))) | .[]
-     | select(type == "object") | (.result // .)] | first // null) as $qn
+| ([$t.quoted_status_result.result?]
+   + [$t | with_entries(select(.key | test("^quoted"))) | .[]
+     | select(type == "object") | (.result // .)] | map(select(. != null)) | first // null) as $qn
 | (if $qn == null then null else ($qn | base("")) end) as $q
 | ($t | base(if $q == null then "" else $q.id end)) as $m
 | ([$t, $t.legacy, $t.details] | map(select(type == "object")
@@ -219,16 +223,8 @@ if [ -n "$m_reply_to" ] && [ "$SHOW_PARENT" = 1 ]; then
   [ -n "$pf" ] && eval "$pf"
 fi
 
-# auth mode: the client label comes from the v2 conversation endpoint (count=1 keeps it small)
 if ((auth)) && [ "$SHOW_SOURCE" = 1 ] && [ -n "$m_id" ]; then
-  s=$([ -f ~/.env-twitter ] && . ~/.env-twitter
-    curl -s -m 8 \
-      -H "Authorization: Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA" \
-      -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" \
-      -H "X-Csrf-Token: ${x_csrf_token}" -H "Cookie: ct0=${x_csrf_token}; auth_token=${auth_token}" \
-      "https://api.twitter.com/2/timeline/conversation/$m_id.json?count=1&include_reply_count=true&cards_platform=Web-13&include_entities=1&include_user_entities=1&include_cards=1&send_error_codes=1&tweet_mode=extended&include_ext_alt_text=true" |
-    jq -r --arg id "$m_id" '(.globalObjects.tweets[$id].source // ([.globalObjects.tweets[]?.source] | first) // "")
-      | gsub("<[^>]*>"; "") | sub("^Twitter (for )?"; "")' 2>/dev/null)
+  s=$("$tcmd" -a -s "$m_id" 2>/dev/null)
   [ -n "$s" ] && m_src=$s
 fi
 
