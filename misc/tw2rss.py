@@ -18,11 +18,9 @@ import argparse
 import datetime
 import time
 import re
-import warnings
-
-with warnings.catch_warnings():
-    warnings.filterwarnings("ignore",category=DeprecationWarning)
-    import cgi
+import os
+import sys
+from urllib.parse import parse_qs
 
 # requires both:
 X_CSRF_TOKEN = 'XXXXXXXXXX'
@@ -235,16 +233,21 @@ class TwitterScraper:
         print(rss)
 
 def main():
-    form = cgi.FieldStorage()
+    # cgi was removed in Python 3.13. Read the query string the way
+    # cgi.FieldStorage did for GET requests
+    query = os.environ.get("QUERY_STRING")
+    if query is None:
+      query = sys.argv[1] if len(sys.argv) > 1 else ""
+    form = parse_qs(query)
     username = "nasa"
     replies = None
     limit = 20
     if "u" in form:
-      username = form["u"].value
+      username = form["u"][0]
     if "r" in form:
       replies = True
     if "l" in form:
-      limit = int(form["l"].value)
+      limit = int(form["l"][0])
 
     assert all([username, limit])
 
