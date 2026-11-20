@@ -47,6 +47,7 @@ Usage:
 import argparse
 import csv
 import glob
+import hashlib
 import json
 import os
 import re
@@ -126,7 +127,8 @@ GUEST_TOKEN_FILE = os.path.join(tempfile.gettempdir(), "timeline_scrape_guest_to
 GUEST_TOKEN_MAX_AGE = 7200  # seconds
 GUEST_RATE_LIMIT_REFRESH_THRESHOLD = 1  # proactively rotate guest token at/below this many requests left
 
-URL = "https://api.twitter.com/graphql/gkjsKepM6gl_HmFWoWKfgg/SearchTimeline"
+#URL = "https://api.twitter.com/graphql/gkjsKepM6gl_HmFWoWKfgg/SearchTimeline"
+URL = "https://x.com/i/api/graphql/vLHjqbDv7TPFMBkIIO1nOA/SearchTimeline"
 
 # Fallback endpoint for shadowbanned/de-indexed accounts, which don't show
 # up in SearchTimeline results at all, but limited to ~3200 tweets
@@ -375,6 +377,38 @@ def save_token_idx(idx):
     except OSError:
         pass
 
+# if a token returns a 404 on search, it's almost always a
+# suspended account - suspended sessions can't use search.
+# skip them instead of burning a request on them each time the rotation comes back around.
+# default location /tmp/timeline_scrape_dead_tokens 
+DEAD_TOKENS_FILE = os.path.join(tempfile.gettempdir(), "timeline_scrape_dead_tokens")
+DEAD_404_GIVEUP = 3  # this many *different* tokens 404ing in a row => blame the endpoint, not the tokens
+
+def _token_key(tok):
+    return hashlib.sha256(tok.encode()).hexdigest()[:12]
+
+def load_dead_tokens():
+    try:
+        with open(DEAD_TOKENS_FILE) as f:
+            return {line.strip() for line in f if line.strip()}
+    except OSError:
+        return set()
+
+def save_dead_tokens(keys):
+    try:
+        with open(DEAD_TOKENS_FILE, "w") as f:
+            f.write("\n".join(sorted(keys)) + ("\n" if keys else ""))
+    except OSError:
+        pass
+
+def next_live_idx(idx, tokens, dead_keys):
+    n = len(tokens)
+    for step in range(1, n + 1):
+        cand = (idx + step) % n
+        if _token_key(tokens[cand]) not in dead_keys:
+            return cand
+    return None
+
 def build_headers(csrf_token, auth_token):
     return {
         "Authorization": f"Bearer {BEARER_TOKEN}",
@@ -536,6 +570,12 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
     else:
         tokens_max = len(AUTH_TOKENS) - 1
         token_idx = load_token_idx(len(AUTH_TOKENS))
+        dead_keys = load_dead_tokens()
+        pending_dead = {}  # key -> label; 404'd this run, committed once a later page succeeds
+        if _token_key(AUTH_TOKENS[token_idx]) in dead_keys:
+            token_idx = next_live_idx(token_idx, AUTH_TOKENS, dead_keys)
+            if token_idx is None:
+                sys.exit(f"[!] All tokens are marked dead (delete {DEAD_TOKENS_FILE} to reset) - aborting.")
     count = 0
     pages_fetched = 0
     counter = 0  # unique tweets collected so far
@@ -619,16 +659,57 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
         try:
             data = resp.json()
         except ValueError:
-            print(f"!! non-JSON response (status {resp.status_code}), saving raw and stopping")
+            body = resp.text[:300].replace("\n", " ")
+            print(f"!! non-JSON response (status {resp.status_code}) "
+                  f"ct={resp.headers.get('content-type')} len={len(resp.content)} body={body!r}")
+            if os.environ.get("TS_DEBUG"):
+                print(f"   url={resp.url[:300]}")
+                print(f"   resp headers={dict(resp.headers)}")
             with open(out_path, "w") as f:
                 f.write(resp.text)
             pages_fetched += 1
+
+            if not guest and resp.status_code == 404:
+                # bare 404 on this endpoint = almost certainly a suspended session
+                key = _token_key(auth_token)
+                pending_dead[key] = token_label
+                print(f"[!] 404 on token {token_label} - assuming suspended, skipping it")
+                if len(pending_dead) >= DEAD_404_GIVEUP:
+                    print(
+                        f"[!] {len(pending_dead)} different tokens 404'd in a row - this looks like a "
+                        f"stale SearchTimeline query id, not suspended accounts. Not marking them dead."
+                    )
+                    exit_status = "stopped - repeated 404s across tokens"
+                    break
+                nxt = next_live_idx(token_idx, AUTH_TOKENS, dead_keys | set(pending_dead))
+                if nxt is None:
+                    print("[!] No live tokens left in the pool.")
+                    exit_status = "stopped - no live tokens"
+                    break
+                token_idx = nxt
+                save_token_idx(token_idx)
+                continue  # retry same page with the next token, no backoff needed
+
+            consecutive_errors += 1
+            if (not guest and resp.status_code in (401, 403, 429)
+                    and consecutive_errors < MAX_CONSECUTIVE_ERRORS):
+                token_idx = next_live_idx(token_idx, AUTH_TOKENS, dead_keys) or 0
+                save_token_idx(token_idx)
+                print(f"   -> rotating to token {token_idx:02d} and retrying")
+                time.sleep(min(BACKOFF_BASE * (2 ** (consecutive_errors - 1)), BACKOFF_MAX))
+                continue
             exit_status = f"stopped - non-JSON response (status {resp.status_code})"
             break
 
         with open(out_path, "w") as f:
             json.dump(data, f)
         pages_fetched += 1
+        if not guest and pending_dead:
+            dead_keys |= set(pending_dead)
+            save_dead_tokens(dead_keys)
+            print(f"[*] Endpoint responded fine - marked {len(pending_dead)} token(s) dead for future runs: "
+                  f"{', '.join(pending_dead.values())}")
+            pending_dead.clear()
 
         api_errors = data.get("errors")
         if api_errors:
@@ -661,7 +742,7 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
                     f"   -> retrying with the next token in {backoff}s "
                     f"({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS} consecutive errors)"
                 )
-                token_idx = token_idx + 1 if token_idx < tokens_max else 0
+                token_idx = next_live_idx(token_idx, AUTH_TOKENS, dead_keys) or 0
                 save_token_idx(token_idx)
             time.sleep(backoff)
             continue
@@ -703,7 +784,7 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
             )
             print(f"[*] All done - completed in {int(end-start)} seconds")
             if not guest:
-                token_idx = token_idx + 1 if token_idx < tokens_max else 0
+                token_idx = next_live_idx(token_idx, AUTH_TOKENS, dead_keys) or 0
                 save_token_idx(token_idx)
             csv_path = maybe_build_csv()
             write_info("completed - reached end of results", pages_fetched, csv_path)
@@ -757,7 +838,7 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
                   f"(UserRepostsTimeline has no server-side id filter, so this is enforced client-side).")
             print(f"[*] All done - completed in {int(end-start)} seconds")
             if not guest:
-                token_idx = token_idx + 1 if token_idx < tokens_max else 0
+                token_idx = next_live_idx(token_idx, AUTH_TOKENS, dead_keys) or 0
                 save_token_idx(token_idx)
             csv_path = maybe_build_csv()
             write_info("completed - reached since_id boundary", pages_fetched, csv_path)
@@ -769,7 +850,7 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
             end = time.time()
             print(f"[*] All done - completed in {int(end-start)} seconds")
             if not guest:
-                token_idx = token_idx + 1 if token_idx < tokens_max else 0
+                token_idx = next_live_idx(token_idx, AUTH_TOKENS, dead_keys) or 0
                 save_token_idx(token_idx)
             csv_path = maybe_build_csv()
             write_info("completed - hit --max-tweets", pages_fetched, csv_path)
@@ -792,7 +873,7 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
             if stuck_count >= STUCK_GIVEUP or not next_cursor:
                 print("\u2717 Cursor pagination stalled - stopping here.")
                 if not guest:
-                    token_idx = token_idx + 1 if token_idx < tokens_max else 0
+                    token_idx = next_live_idx(token_idx, AUTH_TOKENS, dead_keys) or 0
                     save_token_idx(token_idx)
                 csv_path = maybe_build_csv()
                 write_info("partial - cursor pagination stalled", pages_fetched, csv_path)
@@ -801,7 +882,7 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
 
         cursor = next_cursor
         if not guest:
-            token_idx = token_idx + 1 if token_idx < tokens_max else 0
+            token_idx = next_live_idx(token_idx, AUTH_TOKENS, dead_keys) or 0
             save_token_idx(token_idx)
         count += 1
         time.sleep(INTERVAL)
