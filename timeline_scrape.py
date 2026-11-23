@@ -2,46 +2,66 @@
 """
 timeline_scrape.py
 
-Grab all raw tweets and replies from a user timeline via the SearchTimeline
-endpoint. It will fallback to UserTweetsAndReplies if the account is
-shadowbanned/de-indexed, however there is a rough limitation of ~3200 tweets
-through it.
+Grab all raw tweets and replies from a user timeline via the
+UserTweetsAndReplies endpoint (SearchTimeline is no longer used - it's broken
+upstream).
 
-The search query can optionally be bounded once at the start with:
-  --until <date>    adds until:<date> to the query - tweets up to but NOT
-                     including that date/time. Formats: YYYY-MM-DD,
-                     YYYY-MM-DD_HH:MM:SS, or YYYY-MM-DD_HH:MM:SS_UTC.
-  --since <date>    adds since:<date> to the query - tweets from that
-                     date/time onward. Same formats as --until.
-  --max-id <id>     adds max_id:<id> to the query - search backwards from
-                     this tweet id.
-  --since-id <id>   adds since_id:<id> to the query - only tweets newer
-                     than this tweet id.
+UserTweetsAndReplies pages newest-first, has no server-side date/id filter and
+only reaches back roughly the last ~3200 tweets. The stream of tweets never
+ends on its own, so every bound is enforced client-side against the id of each
+incoming tweet (snowflake ids are time-ordered, so --since/--until dates are
+converted to ids up front; dates are always interpreted as UTC):
+
+  --since-id <id>   keep only tweets newer than this id (exclusive). Paging
+                     STOPS as soon as it reaches a tweet at/before this id.
+  --since <date>    keep tweets from that date/time onward (inclusive). Paging
+                     STOPS as soon as it reaches an older tweet.
+  --until <date>    drop tweets at/after that date/time (exclusive).
+  --max-id <id>     drop tweets newer than this id (inclusive).
+  Date formats: YYYY-MM-DD, YYYY-MM-DD_HH:MM:SS, YYYY-MM-DD_HH:MM:SS_UTC.
+  If a date and an id are both given for the same side, the tighter one wins.
+
+--until/--max-id can't seek: the feed is still paged from the newest tweet and
+the too-new ones are discarded until the range is reached. Those pages count
+against the ~3200 tweet depth, so a range far back may be unreachable.
+
+The pinned tweet (served at the top of page 1 whatever its age) is ignored by
+the stop check, so an old pinned tweet can't end the run early. It is still
+kept if it falls inside the range, and dropped from the CSV if it doesn't.
 
 --retweets switches to the UserRepostsTimeline endpoint, which returns only
-the user's reposts (not their own tweets/replies). SearchTimeline's index
-only covers the last 7 days, so for pulling a user's full retweet history
-this is the endpoint to use. It takes no search query, so --until/--since/
---max-id don't apply; --since-id/--update still work but are enforced
-client-side instead of via the query. Mutually exclusive with --alt.
+the user's reposts (not their own tweets/replies). The same client-side
+bounds apply. Not limited to the last 7 days.
 
 --update is a shortcut useful for cronjobs: it looks up the most recently saved
 CSV for the given user, reads the last (highest) tweet id from it, and
-runs with --since-id set to that id - so only new tweets are fetched. If
-no prior CSV exists yet, it falls back to a normal full scan.
+runs with --since-id set to that id - so paging stops the moment it catches up
+to what you already have. If no prior CSV exists yet, it falls back to a normal
+full scan. If the feed runs out before reaching that id (more tweets than the
+endpoint's depth since the last run) a gap warning is printed.
+
+Sessions: tokens come from auth_tokens.txt (bare auth_token per line) and from a
+Nitter-style sessions.jsonl (one JSON object per line: kind, username, id,
+auth_token, ct0 and optionally suspended="true"), looked up next to the script
+or given with --sessions FILE (env: TWITTER_SESSIONS_FILE). Only kind "cookie"
+records are used; the record's own ct0 is sent instead of a random one.
+Suspended sessions are fully usable here - UserTweetsAndReplies doesn't care
+(only search did) - so they're kept in the rotation like any other session and
+are never put on the dead-token list, even if an older run marked them dead.
 
 When done, builds a CSV of all downloaded JSON with columns:
-Id,Date,Text,Replies,ReTweets,Likes,Views,Source,Birdwatch,ConversationId,Url
+Id,Date,Text,Replies,ReTweets,Quotes,Likes,Views,Source,Birdwatch,ConversationId,Url
 (text includes the tweet's first linked URL and, for quote-tweets, an
 inline "[@user] quoted text url", "[quote unavailable: url]" (blocked/
 suspended/protected quote), or "[deleted tweet]" suffix
+The CSV only contains tweets inside the --since/--until range.
 
 Usage:
-    ./timeline_scrape.py <username> [--max-tweets N] [--until DATE] [--since DATE] [--max-id ID] [--since-id ID] [--update] [--no-csv] [--alt | --retweets] [--yes]
+    ./timeline_scrape.py <username> [--max-tweets N] [--until DATE] [--since DATE] [--max-id ID] [--since-id ID] [--update] [--no-csv] [--guest] [--retweets] [--sessions FILE]
 
-    --max-tweets is optional but highly recommended - without it the script
-    keeps paging forever until it either runs out of tweets or every token
-    in AUTH_TOKENS gets rate-limited.
+    Without --since/--since-id/--update/--max-tweets the script keeps paging
+    until the endpoint runs out of tweets or every token in AUTH_TOKENS gets
+    rate-limited.
 """
 
 import argparse
@@ -55,20 +75,10 @@ import secrets
 import sys
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import requests
 
-# auth_tokens are preferred to be loaded from an auth_tokens.txt file
-# next to this script (one per line).
 
-# add at least 20 auth_tokens to be safe.
-# each account will make one request every 20 seconds (900sec / 20 = 45 requests)
-# which is below the 50 per 15 minute reset (there is a 24hr limit as well)
-# you can restart next batch using <max_id> passed as an option to the script,
-# if you exceed rate-limits, at a later time.
-# The last-used token index is persisted to TOKEN_IDX_FILE (see below), so if
-# you run this script back-to-back over many users, each run picks up
-# rotation where the last one left off instead of always hammering token 0.
 AUTH_TOKENS_FILE = os.environ.get(
     "TWITTER_AUTH_TOKENS_FILE",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth_tokens.txt"),
@@ -85,25 +95,67 @@ def _load_auth_tokens():
         return []
 
 AUTH_TOKENS = _load_auth_tokens() or [
-  #"adfadfdf3443242323232adafafaf22222231313",
-  #"adf232322423423423232adbcdfdfd3333333434",
-  #"adfdfaf332442423423423424234234342424323"
 ]
 
-INTERVAL = 0 # sleep n seconds between successful requests
-PRODUCT = "Latest"  # Latest | Top
+SESSIONS_FILE = os.environ.get(
+    "TWITTER_SESSIONS_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions.jsonl"),
+)
+SESSION_META = {}
 
-MAX_CONSECUTIVE_ERRORS = 5  # give up after this many API errors in a row
-BACKOFF_BASE = 2  # seconds; doubles each consecutive error, capped below
-BACKOFF_MAX = 60  # seconds
+def add_sessions(path, required=False):
+    """Merge cookie sessions from a sessions.jsonl into AUTH_TOKENS/SESSION_META.
+    A record here wins over a bare auth_tokens.txt entry for the same token."""
+    try:
+        f = open(path)
+    except OSError as e:
+        if required:
+            sys.exit(f"[!] can't read sessions file {path}: {e}")
+        return 0
+    added = skipped = 0
+    with f:
+        for n, line in enumerate(f, 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                print(f"[!] {path}:{n} isn't valid JSON - skipping")
+                skipped += 1
+                continue
+            if not isinstance(rec, dict) or not rec.get("auth_token") or rec.get("kind", "cookie") != "cookie":
+                skipped += 1
+                continue
+            tok = rec["auth_token"]
+            SESSION_META[tok] = {
+                "username": rec.get("username") or "",
+                "id": rec.get("id") or "",
+                "ct0": rec.get("ct0") or "",
+                "suspended": str(rec.get("suspended", "")).lower() == "true",
+            }
+            if tok not in AUTH_TOKENS:
+                AUTH_TOKENS.append(tok)
+            added += 1
+    n_susp = sum(1 for m in SESSION_META.values() if m["suspended"])
+    print(f"[*] sessions: {added} cookie session(s) from {path} ({n_susp} suspended)"
+          + (f", {skipped} line(s) skipped (non-cookie/invalid)" if skipped else ""))
+    return added
 
-STUCK_GIVEUP = 5  # give up after this many pages in a row with no new tweets / no cursor advance
+def token_tag(auth_token):
+    m = SESSION_META.get(auth_token)
+    if not m or not m["username"]:
+        return ""
+    return f"@{m['username']}{' (susp)' if m['suspended'] else ''} "
 
-# Persists the last-used auth token index across separate invocations of this
-# script (e.g. looping over many users back-to-back). Without this, every
-# invocation restarts at AUTH_TOKENS[0], so runs that bail out quickly (no
-# new tweets, immediate end-of-results, etc.) hammer the first token instead
-# of rotating evenly through the whole list.
+INTERVAL = 0
+
+MAX_CONSECUTIVE_ERRORS = 5
+BACKOFF_BASE = 2
+BACKOFF_MAX = 60
+
+STUCK_GIVEUP = 5
+
 TOKEN_IDX_FILE = os.path.join(tempfile.gettempdir(), "timeline_scrape_token_idx")
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(_\d{2}:\d{2}:\d{2}(_UTC)?)?$")
@@ -113,27 +165,14 @@ BEARER_TOKEN = (
     "%3DRUMF4xAQLsbeBhTSRrCiQpJtxoGWeyHrDb5te2jpGskWDFW82F"
 )
 
-# Bearer token used for --guest mode (no auth_token/cookie required, works
-# with SearchTimeline). Guest tokens issued against it are cached below so
-# repeated runs/pages don't hit activate.json every time.
-#
-# Left blank in the public version - fill this in yourself to enable --guest.
-# Without it, --guest will refuse to run and you'll need AUTH_TOKENS instead.
 GUEST_BEARER_TOKEN = ""
 
-# Guest tokens are valid for ~2 hours; cache the issued token here so we
-# don't call guest/activate.json on every page/run.
 GUEST_TOKEN_FILE = os.path.join(tempfile.gettempdir(), "timeline_scrape_guest_token")
-GUEST_TOKEN_MAX_AGE = 7200  # seconds
-GUEST_RATE_LIMIT_REFRESH_THRESHOLD = 1  # proactively rotate guest token at/below this many requests left
+GUEST_TOKEN_MAX_AGE = 7200
+GUEST_RATE_LIMIT_REFRESH_THRESHOLD = 1
 
-#URL = "https://api.twitter.com/graphql/gkjsKepM6gl_HmFWoWKfgg/SearchTimeline"
-URL = "https://x.com/i/api/graphql/vLHjqbDv7TPFMBkIIO1nOA/SearchTimeline"
 
-# Fallback endpoint for shadowbanned/de-indexed accounts, which don't show
-# up in SearchTimeline results at all, but limited to ~3200 tweets
-# regardless of --max-tweets.
-ALT_MAX_TWEETS_HINT = 3200
+TIMELINE_CAP_HINT = 3200
 
 USER_LOOKUP_URL = "https://x.com/i/api/graphql/laYnJPCAcVo0o6pzcnlVxQ/UserByScreenName"
 USER_LOOKUP_FEATURES = {
@@ -151,8 +190,8 @@ USER_LOOKUP_FEATURES = {
     "responsive_web_graphql_timeline_navigation_enabled": True,
 }
 
-ALT_URL = "https://x.com/i/api/graphql/bt4TKuFz4T7Ckk-VvQVSow/UserTweetsAndReplies"
-ALT_FEATURES = {
+TIMELINE_URL = "https://x.com/i/api/graphql/bt4TKuFz4T7Ckk-VvQVSow/UserTweetsAndReplies"
+TIMELINE_FEATURES = {
     "rweb_tipjar_consumption_enabled": True,
     "responsive_web_graphql_exclude_directive_enabled": True,
     "verified_phone_label_enabled": False,
@@ -177,9 +216,8 @@ ALT_FEATURES = {
     "longform_notetweets_inline_media_enabled": True,
     "responsive_web_enhance_cards_enabled": False,
 }
-ALT_FIELD_TOGGLES = {"withArticlePlainText": True}
+TIMELINE_FIELD_TOGGLES = {"withArticlePlainText": True}
 
-# retweets-only
 REPOSTS_URL = "https://x.com/i/api/graphql/CnNg1YiKG7bRgi-RoIfKsw/UserRepostsTimeline"
 REPOSTS_FEATURES = {
     "rweb_video_screen_enabled": False,
@@ -225,62 +263,7 @@ REPOSTS_FEATURES = {
 }
 REPOSTS_FIELD_TOGGLES = {"withPayments": False, "withArticlePlainText": False}
 
-FEATURES = {
-    "android_graphql_skip_api_media_color_palette": False,
-    "blue_business_profile_image_shape_enabled": False,
-    "creator_subscriptions_subscription_count_enabled": False,
-    "creator_subscriptions_tweet_preview_api_enabled": True,
-    "freedom_of_speech_not_reach_fetch_enabled": False,
-    "graphql_is_translatable_rweb_tweet_is_translatable_enabled": False,
-    "hidden_profile_likes_enabled": False,
-    "highlights_tweets_tab_ui_enabled": False,
-    "includeHasBirdwatchNotes": True,
-    "interactive_text_enabled": False,
-    "longform_notetweets_consumption_enabled": True,
-    "longform_notetweets_inline_media_enabled": False,
-    "longform_notetweets_richtext_consumption_enabled": True,
-    "longform_notetweets_rich_text_read_enabled": False,
-    "responsive_web_edit_tweet_api_enabled": False,
-    "responsive_web_enhance_cards_enabled": False,
-    "responsive_web_graphql_exclude_directive_enabled": True,
-    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
-    "responsive_web_graphql_timeline_navigation_enabled": False,
-    "responsive_web_media_download_video_enabled": False,
-    "responsive_web_text_conversations_enabled": False,
-    "responsive_web_twitter_article_tweet_consumption_enabled": False,
-    "responsive_web_twitter_blue_verified_badge_is_enabled": True,
-    "rweb_lists_timeline_redesign_enabled": True,
-    "spaces_2022_h2_clipping": True,
-    "spaces_2022_h2_spaces_communities": True,
-    "standardized_nudges_misinfo": False,
-    "subscriptions_verification_info_enabled": True,
-    "subscriptions_verification_info_reason_enabled": True,
-    "subscriptions_verification_info_verified_since_enabled": True,
-    "super_follow_badge_privacy_enabled": False,
-    "super_follow_exclusive_tweet_notifications_enabled": False,
-    "super_follow_tweet_api_enabled": False,
-    "super_follow_user_api_enabled": False,
-    "tweet_awards_web_tipping_enabled": False,
-    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": False,
-    "tweetypie_unmention_optimization_enabled": False,
-    "unified_cards_ad_metadata_container_dynamic_card_content_query_enabled": False,
-    "verified_phone_label_enabled": False,
-    "vibe_api_enabled": False,
-    "view_counts_everywhere_api_enabled": True,
-    "responsive_web_grok_analyze_button_fetch_trends_enabled": True,
-    "creator_subscriptions_quote_tweet_preview_enabled": False,
-    "profile_label_improvements_pcf_label_in_post_enabled": False,
-    "rweb_tipjar_consumption_enabled": True,
-    "rweb_video_timestamps_enabled": True,
-    "c9s_tweet_anatomy_moderator_badge_enabled": True,
-    "communities_web_enable_tweet_community_results_fetch": True,
-    "premium_content_api_read_enabled": False,
-    "articles_preview_enabled": True,
-    "responsive_web_grok_analyze_post_followups_enabled": False,
-    "withBirdwatchNotes": True,
-}
-
-TWITTER_EPOCH_MS = 1288834974657  # snowflake epoch offset, in ms
+TWITTER_EPOCH_MS = 1288834974657
 
 def snowflake_epoch_seconds(tweet_id):
     return ((int(tweet_id) >> 22) + TWITTER_EPOCH_MS) / 1000
@@ -377,12 +360,8 @@ def save_token_idx(idx):
     except OSError:
         pass
 
-# if a token returns a 404 on search, it's almost always a
-# suspended account - suspended sessions can't use search.
-# skip them instead of burning a request on them each time the rotation comes back around.
-# default location /tmp/timeline_scrape_dead_tokens 
 DEAD_TOKENS_FILE = os.path.join(tempfile.gettempdir(), "timeline_scrape_dead_tokens")
-DEAD_404_GIVEUP = 3  # this many *different* tokens 404ing in a row => blame the endpoint, not the tokens
+DEAD_404_GIVEUP = 3
 
 def _token_key(tok):
     return hashlib.sha256(tok.encode()).hexdigest()[:12]
@@ -410,6 +389,7 @@ def next_live_idx(idx, tokens, dead_keys):
     return None
 
 def build_headers(csrf_token, auth_token):
+    csrf_token = (SESSION_META.get(auth_token) or {}).get("ct0") or csrf_token
     return {
         "Authorization": f"Bearer {BEARER_TOKEN}",
         "User-Agent": "TwitterAndroid/10.21.1",
@@ -476,53 +456,100 @@ def lookup_user_id(session, headers, screen_name):
     except (KeyError, TypeError):
         return None
 
-def validate_date(value, flag):
+def id_to_utc(tid):
+    return datetime.fromtimestamp(snowflake_epoch_seconds(tid), timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+def parse_id(value, flag):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        sys.exit(f"[!] {flag} must be a numeric tweet id, got '{value}'")
+
+def date_to_snowflake(value, flag):
+    """Smallest snowflake id that can exist at this (UTC) date/time."""
     if not DATE_RE.match(value):
-        print(
-            f"[!] {flag} value '{value}' doesn't match "
-            f"YYYY-MM-DD[_HH:MM:SS[_UTC]] - passing it through to the query as-is."
-        )
-    return value
+        sys.exit(f"[!] {flag} value '{value}' doesn't match YYYY-MM-DD[_HH:MM:SS[_UTC]]")
+    v = re.sub(r"_UTC$", "", value)
+    fmt = "%Y-%m-%d_%H:%M:%S" if "_" in v else "%Y-%m-%d"
+    try:
+        dt = datetime.strptime(v, fmt).replace(tzinfo=timezone.utc)
+    except ValueError as e:
+        sys.exit(f"[!] {flag} value '{value}' is not a valid date/time: {e}")
+    return (int(dt.timestamp() * 1000) - TWITTER_EPOCH_MS) << 22
 
-def build_query(user, until=None, since=None, max_id=None, since_id=None):
-    query = f"include:nativeretweets from:{user}"
-    if since:
-        query += f" since:{validate_date(since, '--since')}"
-    if until:
-        query += f" until:{validate_date(until, '--until')}"
+def resolve_bounds(since=None, until=None, since_id=None, max_id=None):
+    """Collapse --since/--since-id/--until/--max-id into one id range.
+    Returns (lower, upper): a tweet is in range when lower < id <= upper
+    (None = open on that side). Where a date and an id are both given for the
+    same side, the tighter one wins."""
+    lowers, uppers = [], []
     if since_id:
-        query += f" since_id:{since_id}"
+        lowers.append(parse_id(since_id, "--since-id"))
+    if since:
+        lowers.append(date_to_snowflake(since, "--since") - 1)
+    if until:
+        uppers.append(date_to_snowflake(until, "--until") - 1)
     if max_id:
-        query += f" max_id:{max_id}"
-    return query
+        uppers.append(parse_id(max_id, "--max-id"))
+    lower = max(lowers) if lowers else None
+    upper = min(uppers) if uppers else None
+    if lower is not None and upper is not None and lower >= upper:
+        sys.exit("[!] the since/since-id bound is not older than the until/max-id bound - empty range.")
+    return lower, upper
 
-def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=None, no_csv=False, guest=False, alt=False, retweets=False, yes=False):
+def result_tweet_id(raw):
+    """Id of the tweet this timeline result will become in the CSV (same
+    unwrapping as extract_row), or None for tombstones/unavailable results."""
+    r = unwrap_tweet_result(raw)
+    if not r:
+        return None
+    tid = r.get("rest_id") or (r.get("legacy") or {}).get("id_str")
+    try:
+        return int(tid)
+    except (TypeError, ValueError):
+        return None
+
+def get_pinned_ids(data):
+    """Ids of pinned-tweet entries (TimelinePinEntry). The pinned tweet is
+    served at the top of page 1 whatever its age, so it must not count
+    towards the since-boundary check."""
+    instructions, _ = get_instructions(data)
+    pinned = set()
+    for instr in instructions or []:
+        if instr.get("type") == "TimelinePinEntry":
+            eid = (instr.get("entry") or {}).get("entryId", "")
+            if eid.startswith("tweet-") and eid[6:].isdigit():
+                pinned.add(int(eid[6:]))
+    return pinned
+
+def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=None, no_csv=False, guest=False, retweets=False):
     if guest and not GUEST_BEARER_TOKEN:
         sys.exit("guest bearer_token not provided")
     if not guest and not AUTH_TOKENS:
-        sys.exit("AUTH_TOKENS / auth_tokens.txt is empty - populate the list before running (or pass --guest).")
-    if alt and retweets:
-        sys.exit("[!] --alt and --retweets both select a different endpoint from the start - pass only one.")
+        sys.exit("No tokens: auth_tokens.txt / sessions.jsonl are empty or missing - add some before running (or pass --guest).")
 
-    using_alt = alt  # may flip True mid-run if SearchTimeline comes back empty on page 1
-    alt_user_id = None
-    if using_alt:
-        print(f"[*] --alt given - scraping @{user} via UserTweetsAndReplies from the start "
-              f"(max ~{ALT_MAX_TWEETS_HINT:,} tweets on this endpoint).")
+    lower, upper = resolve_bounds(since=since, until=until, since_id=since_id, max_id=max_id)
 
-    using_reposts = retweets
-    reposts_user_id = None
-    if using_reposts:
-        print(f"[*] --retweets given - scraping @{user}'s reposts only via UserRepostsTimeline "
-              f"(not limited to the last 7 days like search).")
-        if until or since or max_id:
-            print("[!] --until/--since/--max-id aren't supported by UserRepostsTimeline - ignoring them.")
+    if retweets:
+        endpoint_name = "UserRepostsTimeline (--retweets)"
+        print(f"[*] --retweets given - scraping @{user}'s reposts only via UserRepostsTimeline.")
+    else:
+        endpoint_name = "UserTweetsAndReplies"
+        print(f"[*] Scraping @{user} via UserTweetsAndReplies "
+              f"(feed reaches back ~{TIMELINE_CAP_HINT:,} tweets at most).")
+    if lower is not None:
+        print(f"[*] Lower bound: keeping tweets from {id_to_utc(lower + 1)} onward (id > {lower}); "
+              f"paging stops once that point is reached.")
+    if upper is not None:
+        print(f"[*] Upper bound: dropping tweets at/after {id_to_utc(upper + 1)} (id > {upper}); "
+              f"newer pages are still fetched - the feed can't seek.")
 
     csrf_token = secrets.token_hex(16)
-    if using_reposts:
-        query = f"(UserRepostsTimeline for @{user} - no search query; endpoint has no date/id filtering)"
-    else:
-        query = build_query(user, until=until, since=since, max_id=max_id, since_id=since_id)
+    query = (
+        f"{endpoint_name} for @{user} - client-side range: "
+        f"{'id > ' + str(lower) if lower is not None else 'no lower bound'}, "
+        f"{'id <= ' + str(upper) if upper is not None else 'no upper bound'}"
+    )
 
     now = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     dest = f"{user}-{now}"
@@ -530,9 +557,8 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
 
     def maybe_build_csv():
         if no_csv:
-            # print(f"--no-csv set - skipping CSV write (raw JSON pages remain in {dest}/)")
             return None
-        return build_csv(dest, user)
+        return build_csv(dest, user, lower, upper)
 
     def write_info(status, pages_fetched, csv_path):
         elapsed = int(time.time() - start)
@@ -553,16 +579,20 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
             f"  until: {until or '(none)'}",
             f"  since_id: {since_id or '(none)'}",
             f"  max_id: {max_id or '(none)'}",
+            f"  resolved_lower_exclusive_id: {lower if lower is not None else '(none)'}",
+            f"  resolved_upper_inclusive_id: {upper if upper is not None else '(none)'}",
             f"  no_csv: {no_csv}",
-            f"  endpoint: {'UserRepostsTimeline (--retweets)' if using_reposts else ('UserTweetsAndReplies (--alt)' if alt else ('UserTweetsAndReplies (fallback after empty SearchTimeline)' if using_alt else 'SearchTimeline'))}",
+            f"  endpoint: {endpoint_name}",
+            f"  tokens: {len(AUTH_TOKENS)} ({n_susp} suspended)",
         ]
         info_path = os.path.join(dest, "info.txt")
         with open(info_path, "w") as f:
             f.write("\n".join(lines) + "\n")
-        # print(f"Info written to {info_path}")
         return info_path
 
     session = requests.Session()
+    n_susp = 0
+    four04 = {}
     if guest:
         tokens_max = 0
         token_idx = 0
@@ -570,21 +600,52 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
     else:
         tokens_max = len(AUTH_TOKENS) - 1
         token_idx = load_token_idx(len(AUTH_TOKENS))
-        dead_keys = load_dead_tokens()
-        pending_dead = {}  # key -> label; 404'd this run, committed once a later page succeeds
+        suspended_keys = {_token_key(t) for t, m in SESSION_META.items() if m["suspended"]}
+        dead_keys = load_dead_tokens() - suspended_keys
+        pending_dead = {}
+        n_susp = len(suspended_keys & {_token_key(t) for t in AUTH_TOKENS})
+        print(f"[*] Token pool: {len(AUTH_TOKENS)} session(s), {n_susp} suspended "
+              f"(suspended sessions are used like any other here)")
         if _token_key(AUTH_TOKENS[token_idx]) in dead_keys:
             token_idx = next_live_idx(token_idx, AUTH_TOKENS, dead_keys)
             if token_idx is None:
                 sys.exit(f"[!] All tokens are marked dead (delete {DEAD_TOKENS_FILE} to reset) - aborting.")
     count = 0
     pages_fetched = 0
-    counter = 0  # unique tweets collected so far
+    counter = 0
     consecutive_errors = 0
     stuck_count = 0
     seen_ids = set()
+    seen_raw = set()
+    boundary_reached = False
+    user_id = None
     cursor = None
     exit_status = "completed"
     start = time.time()
+
+    def finish(status, partial=False, check_gap=True):
+        nonlocal token_idx
+        if not guest:
+            token_idx = next_live_idx(token_idx, AUTH_TOKENS, dead_keys) or 0
+            save_token_idx(token_idx)
+        if check_gap and lower is not None and not boundary_reached:
+            print(
+                f"[!] Never reached the lower bound (id <= {lower}, {id_to_utc(lower + 1)}) - the feed "
+                f"ran out or stopped first (~{TIMELINE_CAP_HINT:,} tweet depth), so there may be a gap "
+                f"between this run and your previous data."
+            )
+        csv_path = maybe_build_csv()
+        write_info(status, pages_fetched, csv_path)
+        if partial:
+            print(f"Partial results: {counter:,} unique tweets from @{user} saved to {dest}/")
+        else:
+            print(f"[*] All done - completed in {int(time.time() - start)} seconds")
+            if lower is not None:
+                age = format_duration(time.time() - snowflake_epoch_seconds(lower))
+                print(f"Downloaded {counter:,} tweets from @{user} newer than {lower} ({age}) to {dest}/")
+            else:
+                print(f"Downloaded {counter:,} unique tweets from @{user} to {dest}/")
+        return dest
 
     while True:
         count_next = count + 1
@@ -594,16 +655,25 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
         else:
             auth_token = AUTH_TOKENS[token_idx]
             headers = build_headers(csrf_token, auth_token)
-            token_label = f"\x1b[1m{token_idx:02d}\x1b[0m …{auth_token[-4:]}"
+            token_label = f"\x1b[1m{token_idx:02d}\x1b[0m {token_tag(auth_token)}…{auth_token[-4:]}"
 
-        if using_alt:
-            if alt_user_id is None:
-                alt_user_id = lookup_user_id(session, headers, user)
-                if not alt_user_id:
-                    sys.exit(f"[!] Could not resolve a user id for @{user} via UserByScreenName - aborting.")
-                print(f"[*] Resolved @{user} -> user id {alt_user_id}")
+        if user_id is None:
+            user_id = lookup_user_id(session, headers, user)
+            if not user_id:
+                sys.exit(f"[!] Could not resolve a user id for @{user} via UserByScreenName - aborting.")
+            print(f"[*] Resolved @{user} -> user id {user_id}")
+
+        if retweets:
             variables = {
-                "userId": alt_user_id,
+                "userId": user_id,
+                "count": 20,
+                "includePromotedContent": True,
+                "withVoice": True,
+            }
+            req_url, req_features, req_field_toggles = REPOSTS_URL, REPOSTS_FEATURES, REPOSTS_FIELD_TOGGLES
+        else:
+            variables = {
+                "userId": user_id,
                 "count": 20,
                 "includePromotedContent": False,
                 "includeHasBirdwatchNotes": True,
@@ -612,37 +682,14 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
                 "withVoice": True,
                 "withV2Timeline": True,
             }
-            req_url, req_features, req_field_toggles = ALT_URL, ALT_FEATURES, ALT_FIELD_TOGGLES
-        elif using_reposts:
-            if reposts_user_id is None:
-                reposts_user_id = lookup_user_id(session, headers, user)
-                if not reposts_user_id:
-                    sys.exit(f"[!] Could not resolve a user id for @{user} via UserByScreenName - aborting.")
-                print(f"[*] Resolved @{user} -> user id {reposts_user_id}")
-            variables = {
-                "userId": reposts_user_id,
-                "count": 20,
-                "includePromotedContent": True,
-                "withVoice": True,
-            }
-            req_url, req_features, req_field_toggles = REPOSTS_URL, REPOSTS_FEATURES, REPOSTS_FIELD_TOGGLES
-        else:
-            variables = {
-                "rawQuery": query,
-                "count": 20,
-                "querySource": "typed_query",
-                "includeHasBirdwatchNotes": True,
-                "withBirdwatchNotes": True,
-                "product": PRODUCT,
-            }
-            req_url, req_features, req_field_toggles = URL, FEATURES, None
+            req_url, req_features, req_field_toggles = TIMELINE_URL, TIMELINE_FEATURES, TIMELINE_FIELD_TOGGLES
         if cursor:
             variables["cursor"] = cursor
 
         cursor_label = f"…{cursor[-24:]}" if cursor else "(start)"
         print(
             f"page \x1b[40m {count_next} \x1b[0m | elapsed: {int(time.time()-start)}s | "
-            f"token: {token_label} | endpoint: {'alt' if using_alt else ('reposts' if using_reposts else 'search')} | "
+            f"token: {token_label} | endpoint: {'reposts' if retweets else 'tweets+replies'} | "
             f"user: @{user} | cursor: {cursor_label} | tweets: {counter}"
         )
 
@@ -670,25 +717,30 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
             pages_fetched += 1
 
             if not guest and resp.status_code == 404:
-                # bare 404 on this endpoint = almost certainly a suspended session
                 key = _token_key(auth_token)
-                pending_dead[key] = token_label
-                print(f"[!] 404 on token {token_label} - assuming suspended, skipping it")
-                if len(pending_dead) >= DEAD_404_GIVEUP:
+                four04[key] = token_label
+                if key in suspended_keys:
+                    print(f"[!] 404 on suspended session {token_label} - suspended sessions are fine for "
+                          f"this endpoint, not marking it dead")
+                else:
+                    pending_dead[key] = token_label
+                    print(f"[!] 404 on token {token_label} - skipping it")
+                if len(four04) >= DEAD_404_GIVEUP:
                     print(
-                        f"[!] {len(pending_dead)} different tokens 404'd in a row - this looks like a "
-                        f"stale SearchTimeline query id, not suspended accounts. Not marking them dead."
+                        f"[!] {len(four04)} different tokens 404'd in a row - this looks like a "
+                        f"stale GraphQL query id, not bad sessions. Not marking them dead."
                     )
                     exit_status = "stopped - repeated 404s across tokens"
                     break
-                nxt = next_live_idx(token_idx, AUTH_TOKENS, dead_keys | set(pending_dead))
+                nxt = next_live_idx(token_idx, AUTH_TOKENS, dead_keys | set(four04))
                 if nxt is None:
-                    print("[!] No live tokens left in the pool.")
-                    exit_status = "stopped - no live tokens"
+                    print("[!] Every live token 404'd - this looks like a stale GraphQL query id/features. "
+                          "Not marking them dead.")
+                    exit_status = "stopped - repeated 404s across tokens"
                     break
                 token_idx = nxt
                 save_token_idx(token_idx)
-                continue  # retry same page with the next token, no backoff needed
+                continue
 
             consecutive_errors += 1
             if (not guest and resp.status_code in (401, 403, 429)
@@ -710,6 +762,7 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
             print(f"[*] Endpoint responded fine - marked {len(pending_dead)} token(s) dead for future runs: "
                   f"{', '.join(pending_dead.values())}")
             pending_dead.clear()
+        four04.clear()
 
         api_errors = data.get("errors")
         if api_errors:
@@ -721,14 +774,10 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
                     f"[!] {consecutive_errors} consecutive API errors - giving up "
                     f"(this usually means the backend is down, not a single bad token)."
                 )
-                csv_path = maybe_build_csv()
-                write_info(
+                return finish(
                     f"partial - {consecutive_errors} consecutive API errors, gave up",
-                    pages_fetched,
-                    csv_path,
+                    partial=True,
                 )
-                print(f"Partial results: {counter:,} unique tweets from @{user} saved to {dest}/")
-                return dest
 
             backoff = min(BACKOFF_BASE * (2 ** (consecutive_errors - 1)), BACKOFF_MAX)
             if guest:
@@ -751,55 +800,29 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
         entries, layout = get_entries(data)
         tweets = list(iter_tweet_results(entries, layout))
         next_cursor = get_cursor(entries, "Bottom")
+        pinned_ids = get_pinned_ids(data)
 
         if len(tweets) == 0:
-            if count_next == 1 and not using_alt and not using_reposts:
+            if count_next == 1:
                 print(
-                    f"[!] SearchTimeline returned 0 tweets on the very first page for @{user}. "
-                    f"This usually means the account is shadowbanned/de-indexed from search "
-                    f"rather than actually empty."
+                    "[!] 0 tweets on the very first page - empty/protected account, bad auth, "
+                    "or a stale query id/features (check the saved JSON)."
                 )
-                fall_back = False
-                if yes:
-                    fall_back = True
-                    print(f"    --yes given - falling back to UserTweetsAndReplies (max ~{ALT_MAX_TWEETS_HINT:,} tweets).")
-                elif not sys.stdin.isatty():
-                    print("    Non-interactive session - skipping fallback. Re-run with --alt or --yes to use it directly.")
-                else:
-                    answer = input(
-                        f"    Try UserTweetsAndReplies instead (max ~{ALT_MAX_TWEETS_HINT:,} tweets)? [y/N] "
-                    ).strip().lower()
-                    fall_back = answer == "y"
-                if fall_back:
-                    using_alt = True
-                    cursor = None
-                    stuck_count = 0
-                    print(f"[*] Switching to UserTweetsAndReplies for @{user} ...")
-                    continue
+            print(f"[*] Timeline returned 0 tweets on this page (status {resp.status_code}) - end of feed")
+            return finish("completed - reached end of results")
 
-            end = time.time()
-            print(
-                f"[*] Search index returned 0 tweets on this page "
-                f"(status {resp.status_code})"
-            )
-            print(f"[*] All done - completed in {int(end-start)} seconds")
-            if not guest:
-                token_idx = next_live_idx(token_idx, AUTH_TOKENS, dead_keys) or 0
-                save_token_idx(token_idx)
-            csv_path = maybe_build_csv()
-            write_info("completed - reached end of results", pages_fetched, csv_path)
-            if since_id:
-                age = format_duration(time.time() - snowflake_epoch_seconds(since_id))
-                print(f"Downloaded {counter:,} tweets from @{user} after {since_id} ({age}) to {dest}/")
-            else:
-                print(f"Downloaded latest {counter:,} unique tweets from @{user} to {dest}/")
-            return dest
+        items = []
+        for t in tweets:
+            tid = result_tweet_id(t)
+            if tid is not None:
+                items.append((tid, unwrap_tweet_result(t), tid in pinned_ids))
 
-        # date range of first/last tweet in this page
-        first_created = tweets[0]
-        last_created = tweets[-1]
-        first_date = (first_created or {}).get("legacy", {}).get("created_at", "").replace(" +0000", "")
-        last_date = (last_created or {}).get("legacy", {}).get("created_at", "").replace(" +0000", "")
+        shown = [it for it in items if not it[2]] or items
+        if shown:
+            first_date = ((shown[0][1].get("legacy") or {}).get("created_at") or "").replace(" +0000", "")
+            last_date = ((shown[-1][1].get("legacy") or {}).get("created_at") or "").replace(" +0000", "")
+        else:
+            first_date = last_date = ""
         print(f"\x1b[1;96m{first_date} <----> {last_date}\x1b[0m", end=" | ")
 
         remaining = print_rate_limits(resp.headers)
@@ -807,61 +830,32 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
             print(f"[*] Guest token has {remaining} request(s) left - rotating to a fresh one")
             guest_token = get_guest_token(session, force_refresh=True)
 
-        page_ids = []
-        for t in tweets:
-            rid = (t or {}).get("rest_id")
-            if rid is not None:
-                try:
-                    page_ids.append(int(rid))
-                except ValueError:
-                    pass
+        page_ids = [tid for tid, _, _ in items]
+        organic_ids = [tid for tid, _, pinned in items if not pinned]
 
-        hit_since_id = False
-        if using_reposts and since_id:
-            try:
-                since_id_int = int(since_id)
-            except ValueError:
-                since_id_int = None
-            if since_id_int is not None:
-                kept = [pid for pid in page_ids if pid > since_id_int]
-                if len(kept) < len(page_ids):
-                    hit_since_id = True
-                page_ids = kept
+        hit_lower = lower is not None and any(tid <= lower for tid in organic_ids)
+        kept = [tid for tid in page_ids
+                if (lower is None or tid > lower) and (upper is None or tid <= upper)]
+        skipped_newer = sum(1 for tid in organic_ids if upper is not None and tid > upper)
 
-        new_ids = [pid for pid in page_ids if pid not in seen_ids]
-        seen_ids.update(page_ids)
+        new_raw = [tid for tid in page_ids if tid not in seen_raw]
+        seen_raw.update(page_ids)
+        seen_ids.update(kept)
         counter = len(seen_ids)
 
-        if hit_since_id:
-            end = time.time()
-            print(f"[*] Reached tweets at/before since_id:{since_id} - stopping here "
-                  f"(UserRepostsTimeline has no server-side id filter, so this is enforced client-side).")
-            print(f"[*] All done - completed in {int(end-start)} seconds")
-            if not guest:
-                token_idx = next_live_idx(token_idx, AUTH_TOKENS, dead_keys) or 0
-                save_token_idx(token_idx)
-            csv_path = maybe_build_csv()
-            write_info("completed - reached since_id boundary", pages_fetched, csv_path)
-            age = format_duration(time.time() - snowflake_epoch_seconds(since_id))
-            print(f"Downloaded {counter:,} tweets from @{user} after {since_id} ({age}) to {dest}/")
-            return dest
+        if skipped_newer:
+            print(f"    skipped {skipped_newer} tweet(s) newer than the upper bound")
+
+        if hit_lower:
+            boundary_reached = True
+            print(f"[*] Reached tweets at/before id {lower} ({id_to_utc(lower + 1)}) - stopping here "
+                  f"(UserTweetsAndReplies has no server-side filter, so this is enforced client-side).")
+            return finish("completed - reached --since/--since-id boundary")
 
         if max_tweets is not None and counter >= max_tweets:
-            end = time.time()
-            print(f"[*] All done - completed in {int(end-start)} seconds")
-            if not guest:
-                token_idx = next_live_idx(token_idx, AUTH_TOKENS, dead_keys) or 0
-                save_token_idx(token_idx)
-            csv_path = maybe_build_csv()
-            write_info("completed - hit --max-tweets", pages_fetched, csv_path)
-            if since_id:
-                age = format_duration(time.time() - snowflake_epoch_seconds(since_id))
-                print(f"Downloaded {counter:,} tweets from @{user} after {since_id} ({age}) to {dest}/")
-            else:
-                print(f"Downloaded latest {counter:,} unique tweets from @{user} to {dest}/")
-            return dest
+            return finish("completed - hit --max-tweets", check_gap=False)
 
-        made_progress = bool(new_ids) and next_cursor and next_cursor != cursor
+        made_progress = bool(new_raw) and next_cursor and next_cursor != cursor
         if made_progress:
             stuck_count = 0
         else:
@@ -872,13 +866,7 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
             )
             if stuck_count >= STUCK_GIVEUP or not next_cursor:
                 print("\u2717 Cursor pagination stalled - stopping here.")
-                if not guest:
-                    token_idx = next_live_idx(token_idx, AUTH_TOKENS, dead_keys) or 0
-                    save_token_idx(token_idx)
-                csv_path = maybe_build_csv()
-                write_info("partial - cursor pagination stalled", pages_fetched, csv_path)
-                print(f"Partial results: {counter:,} unique tweets from @{user} saved to {dest}/")
-                return dest
+                return finish("partial - cursor pagination stalled", partial=True)
 
         cursor = next_cursor
         if not guest:
@@ -887,10 +875,7 @@ def scrape(user, max_tweets=None, until=None, since=None, max_id=None, since_id=
         count += 1
         time.sleep(INTERVAL)
 
-    csv_path = maybe_build_csv()
-    write_info(exit_status, pages_fetched, csv_path)
-    print(f"Partial results: {counter:,} unique tweets from @{user} saved to {dest}/")
-    return dest
+    return finish(exit_status, partial=True)
 
 def get_media_url(media):
     mtype = media.get("type")
@@ -999,9 +984,6 @@ def build_text(result):
     base, mapping = expand_entities(base, legacy)
 
     if note_text:
-        # note-tweet text is the full long-form body but doesn't inline the
-        # trailing media/link t.co the way legacy full_text does - append
-        # anything that didn't already land in the text.
         extras = [full for full in mapping.values() if full not in base]
         if extras:
             base = f"{base} {' '.join(extras)}"
@@ -1050,7 +1032,10 @@ def extract_row(raw_result):
 
     return [tweet_id, date, text, replies, retweets, quotes, likes, views, source, birdwatch, conversation_id, url]
 
-def build_csv(dest, user):
+def build_csv(dest, user, lower=None, upper=None):
+    """Build the CSV from every saved page, keeping only tweets inside the
+    lower < id <= upper range (the pages also hold out-of-range tweets from the
+    page that crossed the boundary, plus the pinned tweet)."""
     rows = {}
     for fp in sorted(glob.glob(os.path.join(dest, "*.json"))):
         with open(fp) as f:
@@ -1062,10 +1047,14 @@ def build_csv(dest, user):
         for raw_result in iter_tweet_results(entries, layout):
             row = extract_row(raw_result)
             if row and row[0]:
-                rows[row[0]] = row  # dedup by tweet id, last write wins
+                if row[0].isdigit():
+                    tid = int(row[0])
+                    if (lower is not None and tid <= lower) or (upper is not None and tid > upper):
+                        continue
+                rows[row[0]] = row
 
     if not rows:
-        print(f"No tweets found for @{user} - skipping CSV write.")
+        print(f"No in-range tweets found for @{user} - skipping CSV write.")
         return None
 
     csv_path = f"{dest}.csv"
@@ -1074,7 +1063,6 @@ def build_csv(dest, user):
         writer.writerow(
             ["Id", "Date", "Text", "Replies", "ReTweets", "Quotes", "Likes", "Views", "Source", "Birdwatch", "ConversationId", "Url"]
         )
-        # ascending, unique by Id
         for tid in sorted(rows.keys(), key=lambda x: int(x) if x.isdigit() else 0):
             writer.writerow(rows[tid])
 
@@ -1096,7 +1084,7 @@ def last_tweet_id_from_csv(csv_path):
     last_id = None
     with open(csv_path, newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
-        next(reader, None)  # skip header
+        next(reader, None)
         for row in reader:
             if row and row[0]:
                 last_id = row[0]
@@ -1104,8 +1092,8 @@ def last_tweet_id_from_csv(csv_path):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Scrape all tweets from a user via X's SearchTimeline GraphQL endpoint, "
-        "paginating with the response cursor."
+        description="Scrape all tweets and replies from a user via X's UserTweetsAndReplies GraphQL "
+        "endpoint, paginating with the response cursor. Date/id bounds are enforced client-side."
     )
     parser.add_argument("user", help="username to scrape (without @)")
     parser.add_argument(
@@ -1114,41 +1102,37 @@ def parse_args():
         type=int,
         default=None,
         help=(
-            "Stop once this many unique tweets are collected. Highly recommended - "
-            "without it the script runs forever, page after page, until it either "
-            "runs out of tweets or every token in AUTH_TOKENS gets rate-limited."
+            "Stop once this many unique in-range tweets are collected. Without it (or a "
+            "--since/--since-id/--update bound) the script pages until the endpoint runs out "
+            "of tweets (~3200 deep) or every token in AUTH_TOKENS gets rate-limited."
         ),
     )
     parser.add_argument(
         "--until",
         dest="until",
         help=(
-            "Adds until:<date> to the search query - results up to but NOT including that "
-            "date/time. Formats: YYYY-MM-DD, YYYY-MM-DD_HH:MM:SS, or YYYY-MM-DD_HH:MM:SS_UTC. "
-            "Applied once when building the query; pagination after that is cursor-driven."
+            "Drop tweets at/after this date/time (exclusive, UTC). Formats: YYYY-MM-DD, "
+            "YYYY-MM-DD_HH:MM:SS, or YYYY-MM-DD_HH:MM:SS_UTC. The feed can't seek, so newer "
+            "pages are still fetched and discarded until this point is reached."
         ),
     )
     parser.add_argument(
         "--since",
         dest="since",
         help=(
-            "Adds since:<date> to the search query - results from that date/time onward. "
-            "Formats: YYYY-MM-DD, YYYY-MM-DD_HH:MM:SS, or YYYY-MM-DD_HH:MM:SS_UTC."
+            "Keep tweets from this date/time onward (inclusive, UTC) and STOP paging once an "
+            "older tweet is seen. Same formats as --until."
         ),
     )
     parser.add_argument(
         "--max-id",
         dest="max_id",
-        help=(
-            "Adds max_id:<id> to the search query to search backwards from this tweet id."
-        ),
+        help="Drop tweets newer than this tweet id (inclusive bound). Like --until, newer pages are still fetched.",
     )
     parser.add_argument(
         "--since-id",
         dest="since_id",
-        help=(
-            "Adds since_id:<id> to the search query - only tweets newer than this tweet id."
-        ),
+        help="Keep only tweets newer than this tweet id (exclusive) and STOP paging once it is reached.",
     )
     parser.add_argument(
         "--guest",
@@ -1159,6 +1143,16 @@ def parse_args():
             "required, but subject to guest-tier rate limits and no rotation across "
             "multiple accounts. The guest token is cached to a /tmp file and reused "
             "for ~2 hours before a fresh one is activated."
+        ),
+    )
+    parser.add_argument(
+        "--sessions",
+        dest="sessions",
+        metavar="FILE",
+        help=(
+            "Nitter-style sessions.jsonl to take auth sessions from (cookie kind: auth_token + ct0). "
+            "Merged with auth_tokens.txt. Suspended sessions are used like any other. Defaults to "
+            "sessions.jsonl next to the script (or $TWITTER_SESSIONS_FILE) if it exists."
         ),
     )
     parser.add_argument(
@@ -1173,21 +1167,10 @@ def parse_args():
         action="store_true",
         help=(
             "Look for the most recently saved CSV for this user, read the last (highest) "
-            "tweet id from it, and use that as --since-id for this run - i.e. only fetch "
-            "tweets newer than what you already have. If no prior CSV is found, runs a "
-            "normal full scan instead. Ideal for cronjobs. Ignored if --since-id is also "
+            "tweet id from it, and use that as --since-id for this run - paging stops as "
+            "soon as it catches up to what you already have. If no prior CSV is found, runs "
+            "a normal full scan instead. Ideal for cronjobs. Ignored if --since-id is also "
             "given explicitly."
-        ),
-    )
-    parser.add_argument(
-        "--alt",
-        dest="alt",
-        action="store_true",
-        help=(
-            "Skip SearchTimeline and scrape via UserTweetsAndReplies from the start instead. "
-            "Use this for accounts you already know are shadowbanned/de-indexed from search. "
-            f"This endpoint reads the timeline directly but is capped at the last "
-            f"~{ALT_MAX_TWEETS_HINT:,} tweets regardless of --max-tweets."
         ),
     )
     parser.add_argument(
@@ -1196,31 +1179,14 @@ def parse_args():
         action="store_true",
         help=(
             "Scrape via the UserRepostsTimeline endpoint instead - returns only this user's "
-            "reposts (retweets), not their own tweets or replies. Unlike SearchTimeline this "
-            "isn't limited to the last 7 days, so it's the best way to pull a user's full "
-            "retweet history. Takes no search query, so --until/--since/--max-id are ignored; "
-            "--since-id and --update still work, enforced client-side (pages come back "
-            "newest-first, so the run stops once it reaches an id at or before that point). "
-            "Mutually exclusive with --alt."
-        ),
-    )
-    parser.add_argument(
-        "--yes", "-y",
-        dest="yes",
-        action="store_true",
-        help=(
-            "Auto-confirm the UserTweetsAndReplies fallback prompt shown when SearchTimeline "
-            "returns 0 tweets on the first page, instead of asking interactively. Useful "
-            "combined with --update for unattended/cron runs."
+            "reposts (retweets), not their own tweets or replies. All bounds work the same "
+            "client-side (pages come back newest-first)."
         ),
     )
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
-
-    if args.alt and args.retweets:
-        sys.exit("[!] --alt and --retweets both select a different endpoint from the start - pass only one.")
 
     since_id = args.since_id
     if args.update:
@@ -1243,6 +1209,9 @@ if __name__ == "__main__":
                 "the *next* --update to read from."
             )
 
+    if not args.guest:
+        add_sessions(args.sessions or SESSIONS_FILE, required=bool(args.sessions))
+
     scrape(
         args.user,
         args.max_tweets,
@@ -1252,7 +1221,5 @@ if __name__ == "__main__":
         since_id=since_id,
         no_csv=args.no_csv,
         guest=args.guest,
-        alt=args.alt,
         retweets=args.retweets,
-        yes=args.yes,
     )
